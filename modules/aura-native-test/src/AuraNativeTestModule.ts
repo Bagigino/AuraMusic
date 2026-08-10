@@ -10,6 +10,11 @@ const unavailableModule: AuraNativeTestModuleApi = {
       'AuraNativeTest non è incluso in questo client. Installa una development build iOS.',
     );
   },
+  async testPython() {
+    throw new Error(
+      'CPython non è incluso in questo client. Installa una development build iOS.',
+    );
+  },
 };
 
 export default nativeModule ?? unavailableModule;

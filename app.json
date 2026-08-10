@@ -52,7 +52,8 @@
         }
       ],
       "expo-sqlite",
-      "expo-asset"
+      "expo-asset",
+      "./modules/aura-native-test/plugin/withAuraPython"
     ],
     "experiments": {
       "typedRoutes": true,

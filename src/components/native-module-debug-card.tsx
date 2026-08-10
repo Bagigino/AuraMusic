@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { AuraButton } from '@/components/aura-button';
 import { AuraColors } from '@/constants/aura-theme';
-import { getNativeMessage } from '@/native/aura-native-test';
+import { getNativeMessage, testPython } from '@/native/aura-native-test';
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Errore sconosciuto durante il test nativo.';
@@ -11,11 +11,12 @@ function getErrorMessage(error: unknown) {
 
 export function NativeModuleDebugCard() {
   const [message, setMessage] = useState<string | null>(null);
+  const [pythonMessage, setPythonMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [activeTest, setActiveTest] = useState<'native' | 'python' | null>(null);
 
   const handleTest = async () => {
-    setIsLoading(true);
+    setActiveTest('native');
     setMessage(null);
     setError(null);
 
@@ -24,7 +25,22 @@ export function NativeModuleDebugCard() {
     } catch (testError) {
       setError(getErrorMessage(testError));
     } finally {
-      setIsLoading(false);
+      setActiveTest(null);
+    }
+  };
+
+  const handlePythonTest = async () => {
+    setActiveTest('python');
+    setPythonMessage(null);
+    setError(null);
+
+    try {
+      const result = await testPython();
+      setPythonMessage(typeof result === 'number' ? `Python result: ${result}` : result);
+    } catch (testError) {
+      setError(getErrorMessage(testError));
+    } finally {
+      setActiveTest(null);
     }
   };
 
@@ -38,12 +54,21 @@ export function NativeModuleDebugCard() {
 
       <AuraButton
         label="Test native module"
-        loading={isLoading}
+        disabled={activeTest !== null}
+        loading={activeTest === 'native'}
         onPress={() => void handleTest()}
+        variant="secondary"
+      />
+      <AuraButton
+        label="Test Python"
+        disabled={activeTest !== null}
+        loading={activeTest === 'python'}
+        onPress={() => void handlePythonTest()}
         variant="secondary"
       />
 
       {message && <Text style={styles.success}>{message}</Text>}
+      {pythonMessage && <Text style={styles.success}>{pythonMessage}</Text>}
       {error && <Text style={styles.error}>{error}</Text>}
     </View>
   );

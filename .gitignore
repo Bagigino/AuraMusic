@@ -41,3 +41,6 @@ example
 # generated native folders
 /ios
 /android
+
+# Generated in macOS CI from the pinned official CPython source release
+/modules/aura-native-test/ios/Python.xcframework

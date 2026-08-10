@@ -1,1 +1,1 @@
-export { getNativeMessage } from '../../modules/aura-native-test';
+export { getNativeMessage, testPython } from '../../modules/aura-native-test';

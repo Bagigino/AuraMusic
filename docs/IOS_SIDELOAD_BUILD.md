@@ -2,6 +2,8 @@
 
 Il workflow **.github/workflows/build-ios-unsigned.yml** genera su un runner macOS una build Release per iphoneos, senza certificati o provisioning profile. La cartella **ios/** viene creata in CI tramite Expo Prebuild e rimane esclusa dal repository secondo il modello Continuous Native Generation.
 
+La build include anche il proof of concept embedded **CPython 3.14.7**. Origine, configurazione runtime e limiti sono descritti in **docs/CPYTHON_IOS_POC.md**.
+
 ## Avviare il workflow
 
 1. Pubblica su GitHub il branch che contiene il workflow e il modulo locale **modules/aura-native-test**.
@@ -42,6 +44,8 @@ La pipeline fallisce se TypeScript, lint, Expo Prebuild, CocoaPods o xcodebuild 
 - Expo Autolinking rilevi **AuraNativeTestModule**;
 - CocoaPods installi **AuraNativeTest** come pod locale;
 - il modulo sia presente nell’eseguibile iOS compilato;
+- Python.framework, standard library e codice Python di test siano presenti nel bundle;
+- il binario dell'app sia collegato a Python.framework;
 - esista un solo bundle .app Release per iphoneos;
 - AuraMusic.ipa venga creata e superi il controllo ZIP.
 

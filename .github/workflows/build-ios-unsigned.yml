@@ -10,10 +10,14 @@ jobs:
   build-ios-unsigned:
     name: Build unsigned iOS IPA
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       NODE_VERSION: '22.23.1'
       EXPECTED_BUNDLE_IDENTIFIER: com.mariu.auramusic
+      CPYTHON_VERSION: '3.14.7'
+      CPYTHON_SOURCE_SHA256: 3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81
+      IOS_DEPLOYMENT_TARGET: '16.4'
+      PYTHON_XCFRAMEWORK_PATH: modules/aura-native-test/ios/Python.xcframework
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
 
@@ -37,6 +41,7 @@ jobs:
 
           echo "DERIVED_DATA_PATH=$RUNNER_TEMP/AuraMusicDerivedData" >> "$GITHUB_ENV"
           echo "PACKAGE_ROOT=$RUNNER_TEMP/AuraMusicUnsigned" >> "$GITHUB_ENV"
+          echo "CPYTHON_WORK_DIRECTORY=$RUNNER_TEMP/AuraMusicCPython" >> "$GITHUB_ENV"
 
       - name: Verify macOS toolchain
         shell: bash
@@ -53,6 +58,57 @@ jobs:
             exit supported ? 0 : 1
           }'; then
             echo "::error title=Unsupported Xcode::Expo SDK 57 requires Xcode 26.4 or newer; found $XCODE_VERSION."
+            exit 1
+          fi
+
+      - name: Restore embedded CPython framework cache
+        id: cpython-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.PYTHON_XCFRAMEWORK_PATH }}
+          key: cpython-ios-${{ env.CPYTHON_VERSION }}-arm64-minimal-${{ hashFiles('scripts/build-cpython-ios.sh') }}
+
+      - name: Build embedded CPython framework
+        if: steps.cpython-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          if ! bash scripts/build-cpython-ios.sh \
+            "$CPYTHON_WORK_DIRECTORY" \
+            "$GITHUB_WORKSPACE/$PYTHON_XCFRAMEWORK_PATH"; then
+            echo "::error title=CPython build failed::The official CPython source could not be built for iOS arm64."
+            exit 1
+          fi
+
+      - name: Verify embedded CPython framework
+        shell: bash
+        run: |
+          PYTHON_FRAMEWORK=$(find "$PYTHON_XCFRAMEWORK_PATH" \
+            -mindepth 2 -maxdepth 2 -type d -name 'Python.framework' -print -quit)
+
+          test -n "$PYTHON_FRAMEWORK" || {
+            echo "::error title=CPython framework missing::Python.framework was not found in Python.xcframework."
+            exit 1
+          }
+
+          test -f "$PYTHON_FRAMEWORK/Python" || {
+            echo "::error title=CPython binary missing::Python.framework does not contain its executable."
+            exit 1
+          }
+
+          test -f "$PYTHON_XCFRAMEWORK_PATH/build/utils.sh" || {
+            echo "::error title=CPython build helper missing::The official iOS install helper was not found."
+            exit 1
+          }
+
+          STDLIB_FILE=$(find "$PYTHON_XCFRAMEWORK_PATH" \
+            -path '*/lib/python3.14/encodings/__init__.py' -type f -print -quit)
+          test -n "$STDLIB_FILE" || {
+            echo "::error title=CPython standard library missing::encodings/__init__.py was not found."
+            exit 1
+          }
+
+          if ! lipo -info "$PYTHON_FRAMEWORK/Python" | grep -Fq 'arm64'; then
+            echo "::error title=Invalid CPython architecture::Python.framework does not contain arm64."
             exit 1
           fi
 
@@ -100,6 +156,16 @@ jobs:
           }
           NODE
 
+          test -f modules/aura-native-test/ios/AuraPythonBridge.m || {
+            echo "::error title=Python bridge missing::AuraPythonBridge.m was not found."
+            exit 1
+          }
+
+          test -f modules/aura-native-test/python/aura_test.py || {
+            echo "::error title=Python test missing::aura_test.py was not found."
+            exit 1
+          }
+
       - name: Generate iOS project with Expo Prebuild
         shell: bash
         run: |
@@ -112,6 +178,11 @@ jobs:
             echo "::error title=Expo Prebuild failed::The ios directory was not generated."
             exit 1
           }
+
+          if ! grep -R -Fq "Install embedded CPython" ios/*.xcodeproj/project.pbxproj; then
+            echo "::error title=CPython config plugin failed::The CPython Xcode build phase was not generated."
+            exit 1
+          fi
 
       - name: Install CocoaPods dependencies
         shell: bash
@@ -141,6 +212,12 @@ jobs:
 
           if ! find "ios/Pods/Local Podspecs" -maxdepth 1 -type f -name 'AuraNativeTest.podspec.json' -print -quit | grep -q .; then
             echo "::error title=Local pod missing::AuraNativeTest was not installed as a local CocoaPod."
+            exit 1
+          fi
+
+          LOCAL_PODSPEC=$(find "ios/Pods/Local Podspecs" -maxdepth 1 -type f -name 'AuraNativeTest.podspec.json' -print -quit)
+          if ! grep -Fq "Python.xcframework" "$LOCAL_PODSPEC"; then
+            echo "::error title=CPython CocoaPods integration failed::Python.xcframework is missing from the AuraNativeTest podspec."
             exit 1
           fi
 
@@ -248,8 +325,31 @@ jobs:
             exit 1
           fi
 
+          PYTHON_FRAMEWORK="$APP_PATH/Frameworks/Python.framework"
+          test -f "$PYTHON_FRAMEWORK/Python" || {
+            echo "::error title=Embedded CPython missing::Python.framework was not found in the compiled app."
+            exit 1
+          }
+
+          test -f "$APP_PATH/python/lib/python3.14/encodings/__init__.py" || {
+            echo "::error title=Python standard library missing::The CPython standard library was not found in the app bundle."
+            exit 1
+          }
+
+          test -f "$APP_PATH/app/aura_test.py" || {
+            echo "::error title=Python application code missing::aura_test.py was not found in the app bundle."
+            exit 1
+          }
+
+          if ! otool -L "$APP_EXECUTABLE" | grep -Fq 'Python.framework/Python'; then
+            echo "::error title=CPython not linked::The AuraMusic executable is not linked to Python.framework."
+            exit 1
+          fi
+
           echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
           echo "- App bundle: $APP_PATH" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Embedded CPython: $PYTHON_FRAMEWORK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- CPython version: $CPYTHON_VERSION" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package unsigned IPA
         id: package
