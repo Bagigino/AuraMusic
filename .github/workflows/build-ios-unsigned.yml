@@ -148,14 +148,14 @@ jobs:
         id: ios-project
         shell: bash
         run: |
-          WORKSPACE_COUNT=$(find ios -maxdepth 2 -type d -name '*.xcworkspace' -not -path '*/Pods/*' | wc -l | tr -d '[:space:]')
+          WORKSPACE_COUNT=$(find ios -mindepth 1 -maxdepth 1 -type d -name '*.xcworkspace' | wc -l | tr -d '[:space:]')
           if [ "$WORKSPACE_COUNT" -ne 1 ]; then
-            echo "::error title=Workspace discovery failed::Expected one application xcworkspace, found $WORKSPACE_COUNT."
-            find ios -maxdepth 3 -name '*.xcworkspace' -print
+            echo "::error title=Workspace discovery failed::Expected one top-level application xcworkspace in ios/, found $WORKSPACE_COUNT."
+            find ios -mindepth 1 -maxdepth 1 -type d -name '*.xcworkspace' -print
             exit 1
           fi
 
-          WORKSPACE=$(find ios -maxdepth 2 -type d -name '*.xcworkspace' -not -path '*/Pods/*' -print -quit)
+          WORKSPACE=$(find ios -mindepth 1 -maxdepth 1 -type d -name '*.xcworkspace' -print -quit)
           WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
           PREFERRED_SCHEME_FILE=$(find ios -type f -path '*/xcshareddata/xcschemes/*.xcscheme' -not -path '*/Pods/*' -name "$WORKSPACE_NAME.xcscheme" -print -quit)
 
