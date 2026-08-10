@@ -1,98 +1,196 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { useAppAudioPlayer } from '@/audio/audio-player-context';
+import { AuraButton } from '@/components/aura-button';
+import { AuraScreen } from '@/components/aura-screen';
+import { TrackArtwork } from '@/components/track-artwork';
+import { AuraColors } from '@/constants/aura-theme';
+import { useTrackLibrary } from '@/library/track-library-context';
+import type { Track } from '@/models/track';
+import { formatDuration } from '@/utils/format-duration';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
+export default function LibraryScreen() {
+  const router = useRouter();
+  const { tracks, isLoading, error } = useTrackLibrary();
+  const { playTrack } = useAppAudioPlayer();
+
+  const openTrack = (track: Track) => {
+    playTrack(track);
+    router.push('./player');
+  };
+
   return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+    <AuraScreen title="La tua musica" subtitle="Brani salvati sul dispositivo e pronti da ascoltare.">
+      {isLoading ? (
+        <View style={styles.centerState}>
+          <ActivityIndicator color={AuraColors.primary} />
+          <Text style={styles.mutedText}>Carico la libreria…</Text>
+        </View>
+      ) : tracks.length === 0 ? (
+        <View style={styles.emptyCard}>
+          <View style={styles.emptyIcon}>
+            <Text style={styles.emptyIconText}>♫</Text>
+          </View>
+          <Text style={styles.emptyTitle}>La libreria è vuota</Text>
+          <Text style={styles.emptyText}>
+            Aggiungi il brano M4A incluso per provare subito la riproduzione offline.
+          </Text>
+          <AuraButton label="Vai ad Add Track" onPress={() => router.push('./add-track')} />
+        </View>
+      ) : (
+        <View style={styles.trackList}>
+          <Text style={styles.sectionLabel}>
+            {tracks.length === 1 ? '1 BRANO' : `${tracks.length} BRANI`}
+          </Text>
+          {tracks.map((track) => (
+            <Pressable
+              accessibilityHint="Apre il player e avvia il brano locale"
+              accessibilityRole="button"
+              key={track.id}
+              onPress={() => openTrack(track)}
+              style={({ pressed }) => [styles.trackCard, pressed && styles.pressed]}>
+              <TrackArtwork size={68} />
+              <View style={styles.trackDetails}>
+                <Text numberOfLines={1} style={styles.trackTitle}>
+                  {track.title}
+                </Text>
+                <Text numberOfLines={1} style={styles.trackArtist}>
+                  {track.artist}
+                </Text>
+                <View style={styles.metadataRow}>
+                  <Text style={styles.localBadge}>● LOCALE</Text>
+                  <Text style={styles.duration}>{formatDuration(track.duration)}</Text>
+                </View>
+              </View>
+              <View style={styles.playButton}>
+                <Text style={styles.playButtonText}>▶</Text>
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      )}
 
-export default function HomeScreen() {
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+      {error && <Text style={styles.error}>{error}</Text>}
+    </AuraScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
+  centerState: {
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+    gap: 12,
+    minHeight: 260,
   },
-  title: {
+  mutedText: {
+    color: AuraColors.textMuted,
+    fontSize: 14,
+  },
+  emptyCard: {
+    alignItems: 'center',
+    gap: 14,
+    padding: 26,
+    borderRadius: 26,
+    backgroundColor: AuraColors.surface,
+    borderColor: AuraColors.border,
+    borderWidth: 1,
+  },
+  emptyIcon: {
+    width: 72,
+    height: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 24,
+    backgroundColor: '#33255D',
+    marginBottom: 4,
+  },
+  emptyIconText: {
+    color: AuraColors.primary,
+    fontSize: 34,
+  },
+  emptyTitle: {
+    color: AuraColors.text,
+    fontSize: 21,
+    fontWeight: '800',
+  },
+  emptyText: {
+    color: AuraColors.textMuted,
+    fontSize: 15,
+    lineHeight: 22,
     textAlign: 'center',
+    marginBottom: 8,
   },
-  code: {
-    textTransform: 'uppercase',
+  trackList: {
+    gap: 12,
   },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  sectionLabel: {
+    color: AuraColors.textMuted,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    marginBottom: 2,
+  },
+  trackCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    padding: 14,
+    borderRadius: 22,
+    backgroundColor: AuraColors.surface,
+    borderColor: AuraColors.border,
+    borderWidth: 1,
+  },
+  trackDetails: {
+    flex: 1,
+    minWidth: 0,
+  },
+  trackTitle: {
+    color: AuraColors.text,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  trackArtist: {
+    color: AuraColors.textMuted,
+    fontSize: 14,
+    marginTop: 4,
+  },
+  metadataRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 9,
+  },
+  localBadge: {
+    color: AuraColors.success,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+  },
+  duration: {
+    color: AuraColors.textMuted,
+    fontSize: 11,
+  },
+  playButton: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 21,
+    backgroundColor: AuraColors.primary,
+  },
+  playButtonText: {
+    color: AuraColors.background,
+    fontSize: 15,
+    marginLeft: 2,
+  },
+  pressed: {
+    opacity: 0.75,
+  },
+  error: {
+    color: AuraColors.danger,
+    fontSize: 14,
+    marginTop: 18,
+    textAlign: 'center',
   },
 });

@@ -1,0 +1,277 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios-unsigned:
+    name: Build unsigned iOS IPA
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      NODE_VERSION: '22.23.1'
+      EXPECTED_BUNDLE_IDENTIFIER: com.mariu.auramusic
+      DERIVED_DATA_PATH: ${{ runner.temp }}/AuraMusicDerivedData
+      PACKAGE_ROOT: ${{ runner.temp }}/AuraMusicUnsigned
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Verify macOS toolchain
+        shell: bash
+        run: |
+          node --version
+          npm --version
+          pod --version
+          xcodebuild -version
+
+          XCODE_VERSION=$(xcodebuild -version | awk 'NR == 1 { print $2 }')
+          if ! awk -v version="$XCODE_VERSION" 'BEGIN {
+            split(version, parts, ".")
+            supported = parts[1] > 26 || (parts[1] == 26 && parts[2] >= 4)
+            exit supported ? 0 : 1
+          }'; then
+            echo "::error title=Unsupported Xcode::Expo SDK 57 requires Xcode 26.4 or newer; found $XCODE_VERSION."
+            exit 1
+          fi
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Run TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Verify Expo configuration and local module
+        shell: bash
+        run: |
+          ACTUAL_BUNDLE_IDENTIFIER=$(npx expo config --type public --json | node -e "
+            let input = '';
+            process.stdin.on('data', chunk => input += chunk);
+            process.stdin.on('end', () => {
+              const config = JSON.parse(input);
+              process.stdout.write(config.ios?.bundleIdentifier ?? '');
+            });
+          ")
+
+          if [ "$ACTUAL_BUNDLE_IDENTIFIER" != "$EXPECTED_BUNDLE_IDENTIFIER" ]; then
+            echo "::error title=Invalid bundle identifier::Expected $EXPECTED_BUNDLE_IDENTIFIER, found $ACTUAL_BUNDLE_IDENTIFIER."
+            exit 1
+          fi
+
+          AUTOLINKING_JSON="$RUNNER_TEMP/expo-autolinking.json"
+          npx expo-modules-autolinking search --platform apple --json > "$AUTOLINKING_JSON"
+          node - "$AUTOLINKING_JSON" <<'NODE'
+          const fs = require('node:fs');
+          const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const moduleConfig = config['aura-native-test'];
+
+          if (!moduleConfig?.config?.apple?.modules?.includes('AuraNativeTestModule')) {
+            console.error('::error title=Autolinking failed::AuraNativeTestModule was not found by Expo autolinking.');
+            process.exit(1);
+          }
+          NODE
+
+      - name: Generate iOS project with Expo Prebuild
+        shell: bash
+        run: |
+          if ! npx expo prebuild --platform ios --clean --no-install; then
+            echo "::error title=Expo Prebuild failed::The iOS native project could not be generated."
+            exit 1
+          fi
+
+          test -d ios || {
+            echo "::error title=Expo Prebuild failed::The ios directory was not generated."
+            exit 1
+          }
+
+      - name: Install CocoaPods dependencies
+        shell: bash
+        run: |
+          if ! (cd ios && pod install --repo-update); then
+            echo "::error title=Pod install failed::CocoaPods could not install the iOS dependencies."
+            exit 1
+          fi
+
+      - name: Verify AuraNativeTest CocoaPods integration
+        shell: bash
+        run: |
+          test -f modules/aura-native-test/ios/AuraNativeTestModule.swift || {
+            echo "::error title=Missing Swift module::AuraNativeTestModule.swift was not found."
+            exit 1
+          }
+
+          test -f ios/Podfile.lock || {
+            echo "::error title=Missing Podfile.lock::CocoaPods did not generate ios/Podfile.lock."
+            exit 1
+          }
+
+          if ! grep -Fq "AuraNativeTest" ios/Podfile.lock; then
+            echo "::error title=Autolinking failed::AuraNativeTest is missing from ios/Podfile.lock."
+            exit 1
+          fi
+
+          if ! find "ios/Pods/Local Podspecs" -maxdepth 1 -type f -name 'AuraNativeTest.podspec.json' -print -quit | grep -q .; then
+            echo "::error title=Local pod missing::AuraNativeTest was not installed as a local CocoaPod."
+            exit 1
+          fi
+
+      - name: Discover iOS workspace and scheme
+        id: ios-project
+        shell: bash
+        run: |
+          WORKSPACE_COUNT=$(find ios -maxdepth 2 -type d -name '*.xcworkspace' -not -path '*/Pods/*' | wc -l | tr -d '[:space:]')
+          if [ "$WORKSPACE_COUNT" -ne 1 ]; then
+            echo "::error title=Workspace discovery failed::Expected one application xcworkspace, found $WORKSPACE_COUNT."
+            find ios -maxdepth 3 -name '*.xcworkspace' -print
+            exit 1
+          fi
+
+          WORKSPACE=$(find ios -maxdepth 2 -type d -name '*.xcworkspace' -not -path '*/Pods/*' -print -quit)
+          WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
+          PREFERRED_SCHEME_FILE=$(find ios -type f -path '*/xcshareddata/xcschemes/*.xcscheme' -not -path '*/Pods/*' -name "$WORKSPACE_NAME.xcscheme" -print -quit)
+
+          if [ -n "$PREFERRED_SCHEME_FILE" ]; then
+            SCHEME_FILE="$PREFERRED_SCHEME_FILE"
+          else
+            SCHEME_COUNT=$(find ios -type f -path '*/xcshareddata/xcschemes/*.xcscheme' -not -path '*/Pods/*' | wc -l | tr -d '[:space:]')
+            if [ "$SCHEME_COUNT" -ne 1 ]; then
+              echo "::error title=Scheme discovery failed::No unambiguous application scheme was found."
+              find ios -type f -path '*/xcshareddata/xcschemes/*.xcscheme' -not -path '*/Pods/*' -print
+              exit 1
+            fi
+            SCHEME_FILE=$(find ios -type f -path '*/xcshareddata/xcschemes/*.xcscheme' -not -path '*/Pods/*' -print -quit)
+          fi
+
+          SCHEME=$(basename "$SCHEME_FILE" .xcscheme)
+          XCODE_LIST_JSON="$RUNNER_TEMP/xcode-project-list.json"
+          xcodebuild -list -json -workspace "$WORKSPACE" > "$XCODE_LIST_JSON"
+
+          node - "$XCODE_LIST_JSON" "$SCHEME" <<'NODE'
+          const fs = require('node:fs');
+          const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const expectedScheme = process.argv[3];
+          const schemes = config.workspace?.schemes ?? config.project?.schemes ?? [];
+
+          if (!schemes.includes(expectedScheme)) {
+            console.error('::error title=Scheme validation failed::The discovered scheme is not buildable from the workspace.');
+            console.error('Discovered: ' + expectedScheme);
+            console.error('Available: ' + schemes.join(', '));
+            process.exit(1);
+          }
+          NODE
+
+          echo "workspace=$WORKSPACE" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+          {
+            echo "### iOS project discovered"
+            echo "- Workspace: $WORKSPACE"
+            echo "- Scheme: $SCHEME"
+            echo "- Bundle identifier: $EXPECTED_BUNDLE_IDENTIFIER"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build unsigned Release for iphoneos
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! xcodebuild \
+            -workspace "${{ steps.ios-project.outputs.workspace }}" \
+            -scheme "${{ steps.ios-project.outputs.scheme }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE= \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            clean build | tee "$RUNNER_TEMP/xcodebuild.log"; then
+            echo "::error title=xcodebuild failed::The unsigned Release build did not complete."
+            exit 1
+          fi
+
+      - name: Locate app and verify native module in binary
+        id: app-bundle
+        shell: bash
+        run: |
+          PRODUCTS_DIR="$DERIVED_DATA_PATH/Build/Products/Release-iphoneos"
+          APP_COUNT=$(find "$PRODUCTS_DIR" -maxdepth 1 -type d -name '*.app' | wc -l | tr -d '[:space:]')
+
+          if [ "$APP_COUNT" -ne 1 ]; then
+            echo "::error title=App bundle not found::Expected one .app in $PRODUCTS_DIR, found $APP_COUNT."
+            find "$PRODUCTS_DIR" -maxdepth 2 -type d -name '*.app' -print || true
+            exit 1
+          fi
+
+          APP_PATH=$(find "$PRODUCTS_DIR" -maxdepth 1 -type d -name '*.app' -print -quit)
+          EXECUTABLE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")
+          APP_EXECUTABLE="$APP_PATH/$EXECUTABLE_NAME"
+
+          test -f "$APP_EXECUTABLE" || {
+            echo "::error title=App executable missing::Expected $APP_EXECUTABLE."
+            exit 1
+          }
+
+          strings "$APP_EXECUTABLE" > "$RUNNER_TEMP/auramusic-app-strings.txt"
+          if ! grep -Fq "AuraNativeTest" "$RUNNER_TEMP/auramusic-app-strings.txt"; then
+            echo "::error title=Native module missing::AuraNativeTest was not found in the compiled app executable."
+            exit 1
+          fi
+
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+          echo "- App bundle: $APP_PATH" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Package unsigned IPA
+        id: package
+        shell: bash
+        run: |
+          APP_PATH="${{ steps.app-bundle.outputs.app_path }}"
+          PAYLOAD_DIR="$PACKAGE_ROOT/Payload"
+          IPA_PATH="$PACKAGE_ROOT/AuraMusic.ipa"
+
+          if [ -e "$PACKAGE_ROOT" ]; then
+            echo "::error title=Unsafe package path::Expected a fresh package directory, but $PACKAGE_ROOT already exists."
+            exit 1
+          fi
+
+          mkdir -p "$PAYLOAD_DIR"
+          cp -R "$APP_PATH" "$PAYLOAD_DIR/"
+
+          (
+            cd "$PACKAGE_ROOT"
+            COPYFILE_DISABLE=1 /usr/bin/zip -qry "AuraMusic.ipa" "Payload"
+          )
+
+          test -s "$IPA_PATH" || {
+            echo "::error title=IPA packaging failed::AuraMusic.ipa was not generated."
+            exit 1
+          }
+
+          /usr/bin/unzip -t "$IPA_PATH"
+          echo "ipa_path=$IPA_PATH" >> "$GITHUB_OUTPUT"
+          echo "- Unsigned IPA: $IPA_PATH" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: AuraMusic-unsigned-ipa
+          path: ${{ steps.package.outputs.ipa_path }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

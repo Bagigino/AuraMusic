@@ -1,56 +1,45 @@
-# Welcome to your Expo app 👋
+# AuraMusic
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Prima versione di un player musicale locale realizzato con React Native, Expo SDK 57 e TypeScript.
 
-## Get started
+## Avvio su iPhone con Expo Go
 
-1. Install dependencies
+1. Installa le dipendenze con `npm install`.
+2. Avvia il progetto da Windows con `npx expo start`.
+3. Apri Expo Go su iPhone e scansiona il QR code. PC e iPhone devono poter comunicare sulla stessa rete durante lo sviluppo.
 
-   ```bash
-   npm install
-   ```
+Per aprire anche la versione web, premi `w` nel terminale. La configurazione Metro include il supporto WASM richiesto da `expo-sqlite`.
 
-2. Start the app
+## Prova del flusso offline
 
-   ```bash
-   npx expo start
-   ```
+1. Apri **Add Track** e tocca **Aggiungi alla libreria**.
+2. AuraMusic copia l’asset `aura-test.m4a` nella directory persistente `Documents/music` e salva i metadata in SQLite.
+3. Apri **Library** e tocca il brano: il player usa il suo `file://` locale.
+4. Dopo che il progetto è caricato in Expo Go, disattiva la connessione Internet e prova nuovamente play/pausa e seek. La riproduzione del brano non effettua richieste di rete.
 
-In the output, you'll find options to open the app in a
+## Struttura
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- `src/models`: modello `Track`.
+- `src/database`: migrazioni e repository SQLite.
+- `src/audio`: stato e comandi del player `expo-audio`.
+- `src/services`: interfaccia `DownloadService` (`getInfo` / `downloadAudio`) e implementazione MOCK per l’asset incluso.
+- `src/library`: stato applicativo della libreria.
+- `src/app`: schermate Expo Router `Library`, `Player` e `Add Track`.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+Questa versione non contiene YouTube, `yt-dlp` o codice nativo. In futuro l’implementazione di `DownloadService` potrà essere sostituita senza modificare database, player o UI.
 
-## Get a fresh project
+Sul web il MOCK riproduce l’asset del bundle e SQLite conserva i metadata nel browser, ma non esiste una vera directory `Documents/music`: la copia persistente e la garanzia offline vanno verificate su iOS tramite Expo Go.
 
-When you're ready, run:
+## Test del modulo iOS locale
 
-```bash
-npm run reset-project
+La sezione **Debug** in **Add Track** espone il pulsante **Test native module**. Il modulo locale `AuraNativeTest` usa Expo Modules API e su iOS restituisce da Swift `Hello from native iOS`.
+
+Il modulo custom non è incluso in Expo Go: per eseguire il codice Swift serve una development build. Su web lo stesso pulsante usa il fallback `Native iOS module unavailable on web`; su Expo Go mostra un errore gestito che invita a installare la development build.
+
+## Controlli di progetto
+
+```powershell
+npx tsc --noEmit
+npm run lint
+npx expo export --platform ios
 ```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
