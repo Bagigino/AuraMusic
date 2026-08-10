@@ -14,8 +14,6 @@ jobs:
     env:
       NODE_VERSION: '22.23.1'
       EXPECTED_BUNDLE_IDENTIFIER: com.mariu.auramusic
-      DERIVED_DATA_PATH: ${{ runner.temp }}/AuraMusicDerivedData
-      PACKAGE_ROOT: ${{ runner.temp }}/AuraMusicUnsigned
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
 
@@ -28,6 +26,17 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+
+      - name: Initialize build paths
+        shell: bash
+        run: |
+          test -n "$RUNNER_TEMP" || {
+            echo "::error title=Missing runner temp::RUNNER_TEMP is not available on this runner."
+            exit 1
+          }
+
+          echo "DERIVED_DATA_PATH=$RUNNER_TEMP/AuraMusicDerivedData" >> "$GITHUB_ENV"
+          echo "PACKAGE_ROOT=$RUNNER_TEMP/AuraMusicUnsigned" >> "$GITHUB_ENV"
 
       - name: Verify macOS toolchain
         shell: bash
