@@ -59,6 +59,11 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm ci
 
+      - name: Generate Expo TypeScript environment
+        shell: bash
+        run: |
+          printf '%s\n' '/// <reference types="expo/types" />' > expo-env.d.ts
+
       - name: Run TypeScript check
         run: npx tsc --noEmit
 
