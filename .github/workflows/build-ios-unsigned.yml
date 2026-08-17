@@ -377,9 +377,21 @@ jobs:
             exit 1
           }
 
+          grep -Fq 'def resolve_youtube_playback_source_json' \
+            modules/aura-native-test/python/aura_youtube_metadata.py || {
+            echo "::error title=YouTube playback missing::The embedded Python playback resolver was not found."
+            exit 1
+          }
+
           grep -Fq 'FOUNDATION_EXPORT NSString * _Nullable AuraSearchYouTube' \
             modules/aura-native-test/ios/AuraPythonBridge.h || {
             echo "::error title=YouTube search bridge missing::AuraSearchYouTube was not found."
+            exit 1
+          }
+
+          grep -Fq 'FOUNDATION_EXPORT NSString * _Nullable AuraResolveYouTubePlaybackSource' \
+            modules/aura-native-test/ios/AuraPythonBridge.h || {
+            echo "::error title=YouTube playback bridge missing::AuraResolveYouTubePlaybackSource was not found."
             exit 1
           }
 
@@ -392,6 +404,12 @@ jobs:
           grep -Fq 'AsyncFunction("searchYouTube")' \
             modules/aura-native-test/ios/AuraNativeTestModule.swift || {
             echo "::error title=YouTube search native API missing::searchYouTube was not found in AuraNativeTestModule."
+            exit 1
+          }
+
+          grep -Fq 'AsyncFunction("resolveYouTubePlaybackSource")' \
+            modules/aura-native-test/ios/AuraNativeTestModule.swift || {
+            echo "::error title=YouTube playback native API missing::resolveYouTubePlaybackSource was not found in AuraNativeTestModule."
             exit 1
           }
 
@@ -605,6 +623,12 @@ jobs:
           grep -Fq 'def search_youtube_json' \
             "$APP_PATH/app/aura_youtube_metadata.py" || {
             echo "::error title=YouTube search missing::The Python search entry point is missing from the app bundle."
+            exit 1
+          }
+
+          grep -Fq 'def resolve_youtube_playback_source_json' \
+            "$APP_PATH/app/aura_youtube_metadata.py" || {
+            echo "::error title=YouTube playback missing::The Python playback resolver is missing from the app bundle."
             exit 1
           }
 

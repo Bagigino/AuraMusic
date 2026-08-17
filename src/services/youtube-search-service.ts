@@ -140,13 +140,6 @@ export function isSearchResultInLibrary(
   return tracks.some((track) => track.id === result.id);
 }
 
-export function getSearchResultAnalyzeRoute(result: YouTubeSearchResult) {
-  return {
-    pathname: '/add-track' as const,
-    params: { sourceUrl: result.url },
-  };
-}
-
 export class NativeYouTubeSearchService implements YouTubeSearchService {
   private readonly nativeAdapter: NativeYouTubeSearchAdapter;
 

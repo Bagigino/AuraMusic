@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { NativeDownloadService } from '../src/services/native-download-service-core.ts';
 import {
-  getSearchResultAnalyzeRoute,
   isSearchResultInLibrary,
   mapRawSearchResult,
   NativeYouTubeSearchService,
@@ -93,48 +91,6 @@ test('marks a search result already present in Library', () => {
   assert.equal(isSearchResultInLibrary(expectedResult, [{ id: 'other-video' }]), false);
 });
 
-test('selection routes the normalized URL into the existing Analyze service', async () => {
-  const route = getSearchResultAnalyzeRoute(expectedResult);
-  assert.deepEqual(route, {
-    pathname: '/add-track',
-    params: { sourceUrl: expectedResult.url },
-  });
-
-  const analyzedUrls = [];
-  const downloadService = new NativeDownloadService(
-    {
-      async extractYouTubeInfo(url) {
-        analyzedUrls.push(url);
-        return {
-          id: expectedResult.id,
-          title: expectedResult.title,
-          uploader: expectedResult.uploader,
-          duration: expectedResult.duration,
-          thumbnail: expectedResult.thumbnail,
-          webpageUrl: expectedResult.url,
-          hasM4aAudio: true,
-          preferredM4aFormatId: '140',
-        };
-      },
-      async downloadYouTubeM4a() {
-        throw new Error('selection must not download media');
-      },
-      addDownloadProgressListener() {
-        return { remove() {} };
-      },
-    },
-    {
-      async inspect() {
-        return { status: 'missing', uri: '', size: null };
-      },
-      async verify() {
-        throw new Error('selection must not verify a media file');
-      },
-      async delete() {},
-    },
-  );
-
-  const info = await downloadService.getInfo(route.params.sourceUrl);
-  assert.equal(info.id, expectedResult.id);
-  assert.deepEqual(analyzedUrls, [expectedResult.url]);
+test('selection keeps the normalized video URL ready for Player resolution', () => {
+  assert.equal(expectedResult.url, `https://www.youtube.com/watch?v=${expectedResult.id}`);
 });

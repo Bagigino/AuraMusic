@@ -7,6 +7,7 @@ import { AudioPlayerProvider } from '@/audio/audio-player-context';
 import { AuraColors } from '@/constants/aura-theme';
 import { migrateDatabase } from '@/database/migrations';
 import { TrackLibraryProvider } from '@/library/track-library-context';
+import { PlaylistProvider } from '@/library/playlist-context';
 import { appDownloadService } from '@/services/app-download-service';
 
 const navigationTheme = {
@@ -40,7 +41,8 @@ export default function TabLayout() {
     <ThemeProvider value={navigationTheme}>
       <SQLiteProvider databaseName="auramusic.db" onInit={migrateDatabase}>
         <TrackLibraryProvider downloadService={appDownloadService}>
-          <AudioPlayerProvider>
+          <PlaylistProvider>
+            <AudioPlayerProvider>
             <StatusBar style="light" />
             <Tabs
               screenOptions={{
@@ -79,8 +81,10 @@ export default function TabLayout() {
                 }}
               />
               <Tabs.Screen name="add-track" options={{ href: null }} />
+              <Tabs.Screen name="playlist" options={{ href: null }} />
             </Tabs>
-          </AudioPlayerProvider>
+            </AudioPlayerProvider>
+          </PlaylistProvider>
         </TrackLibraryProvider>
       </SQLiteProvider>
     </ThemeProvider>

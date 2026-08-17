@@ -93,6 +93,24 @@ private struct AuraYouTubeSearchEnvelope: Decodable {
   let error: AuraYouTubeErrorPayload?
 }
 
+private struct AuraYouTubePlaybackPayload: Decodable {
+  let videoId: String
+  let title: String
+  let artist: String?
+  let thumbnail: String?
+  let duration: Double?
+  let remoteUri: String
+  let formatId: String
+  let ext: String?
+  let headers: [String: String]?
+}
+
+private struct AuraYouTubePlaybackEnvelope: Decodable {
+  let ok: Bool
+  let data: AuraYouTubePlaybackPayload?
+  let error: AuraYouTubeErrorPayload?
+}
+
 private struct AuraDownloadedAudioPayload: Decodable {
   let success: Bool
   let alreadyExists: Bool?
@@ -149,6 +167,18 @@ private struct AuraYouTubeSearchResult: Record {
   @Field var url: String = ""
 }
 
+private struct AuraYouTubePlaybackResult: Record {
+  @Field var videoId: String = ""
+  @Field var title: String = ""
+  @Field var artist: String?
+  @Field var thumbnail: String?
+  @Field var duration: Double?
+  @Field var remoteUri: String = ""
+  @Field var formatId: String = ""
+  @Field var ext: String?
+  @Field var headers: [String: String] = [:]
+}
+
 private struct AuraDownloadedAudioResult: Record {
   @Field var success: Bool = true
   @Field var alreadyExists: Bool = false
@@ -199,6 +229,22 @@ private func makeSearchResult(
   result.duration = payload.duration
   result.thumbnail = payload.thumbnail
   result.url = payload.url
+  return result
+}
+
+private func makePlaybackResult(
+  from payload: AuraYouTubePlaybackPayload
+) -> AuraYouTubePlaybackResult {
+  var result = AuraYouTubePlaybackResult()
+  result.videoId = payload.videoId
+  result.title = payload.title
+  result.artist = payload.artist
+  result.thumbnail = payload.thumbnail
+  result.duration = payload.duration
+  result.remoteUri = payload.remoteUri
+  result.formatId = payload.formatId
+  result.ext = payload.ext
+  result.headers = payload.headers ?? [:]
   return result
 }
 
@@ -415,6 +461,45 @@ public class AuraNativeTestModule: Module {
         description: extractionError?.message
           ?? "Estrazione metadata YouTube fallita senza dettagli.",
         code: extractionError?.code ?? "EXTRACTION_ERROR"
+      )
+    }
+
+    AsyncFunction("resolveYouTubePlaybackSource") {
+      (url: String) throws -> AuraYouTubePlaybackResult in
+      var pythonError: NSString?
+      guard let json = AuraResolveYouTubePlaybackSource(url, &pythonError) else {
+        throw AuraNativeModuleException(
+          name: "NATIVE_BRIDGE_ERROR",
+          description: pythonError.map { $0 as String }
+            ?? "Risoluzione playback YouTube fallita senza dettagli.",
+          code: "NATIVE_BRIDGE_ERROR"
+        )
+      }
+
+      let envelope: AuraYouTubePlaybackEnvelope
+      do {
+        envelope = try JSONDecoder().decode(
+          AuraYouTubePlaybackEnvelope.self,
+          from: Data((json as String).utf8)
+        )
+      } catch {
+        throw AuraNativeModuleException(
+          name: "INVALID_NATIVE_RESPONSE",
+          description: "Il bridge Python ha restituito una sorgente playback non valida.",
+          code: "INVALID_NATIVE_RESPONSE"
+        )
+      }
+
+      if envelope.ok, let payload = envelope.data {
+        return makePlaybackResult(from: payload)
+      }
+
+      let playbackError = envelope.error
+      throw AuraNativeModuleException(
+        name: playbackError?.code ?? "PLAYBACK_SOURCE_ERROR",
+        description: playbackError?.message
+          ?? "Risoluzione playback YouTube fallita senza dettagli.",
+        code: playbackError?.code ?? "PLAYBACK_SOURCE_ERROR"
       )
     }
 

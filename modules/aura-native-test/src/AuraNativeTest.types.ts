@@ -40,6 +40,18 @@ export type YouTubeSearchResult = {
   url: string;
 };
 
+export type YouTubePlaybackSource = {
+  videoId: string;
+  title: string;
+  artist: string | null;
+  thumbnail: string | null;
+  duration: number | null;
+  remoteUri: string;
+  formatId: string;
+  ext: string | null;
+  headers?: Record<string, string>;
+};
+
 export type YouTubeExtractionErrorPayload = {
   code: string;
   message: string;
@@ -74,6 +86,7 @@ export type AuraNativeTestModuleApi = {
   testYtDlpAppleProvider(): Promise<YtDlpAppleProviderResult | string>;
   searchYouTube(query: string, limit?: number): Promise<YouTubeSearchResult[] | string>;
   extractYouTubeInfo(url: string): Promise<YouTubeVideoInfo | string>;
+  resolveYouTubePlaybackSource(url: string): Promise<YouTubePlaybackSource | string>;
   downloadYouTubeM4a(
     url: string,
     formatId?: string,

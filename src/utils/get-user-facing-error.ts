@@ -1,6 +1,11 @@
 const ERROR_MESSAGES: Record<string, string> = {
   INVALID_URL: 'Inserisci un URL HTTPS YouTube valido.',
   NO_M4A_FORMAT: 'Non e disponibile un formato M4A audio-only compatibile.',
+  NO_PLAYABLE_AUDIO: 'YouTube non espone una sorgente audio compatibile con iOS.',
+  INVALID_PLAYBACK_SOURCE: 'La sorgente audio restituita non è valida.',
+  INVALID_PLAYBACK_URI: 'La sorgente audio remota non è valida.',
+  PLAYBACK_VIDEO_MISMATCH: 'YouTube ha risolto un video diverso da quello selezionato.',
+  PLAYBACK_UNAVAILABLE: 'La riproduzione YouTube non è disponibile su questa piattaforma.',
   INVALID_FORMAT_ID: 'Il formato M4A selezionato non e piu disponibile.',
   NETWORK_ERROR: 'YouTube non e raggiungibile. Controlla la connessione.',
   NETWORK_TIMEOUT: 'La richiesta a YouTube ha superato il timeout.',

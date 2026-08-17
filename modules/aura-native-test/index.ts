@@ -4,6 +4,7 @@ import type {
   DownloadProgress,
   YouTubeExtractionErrorPayload,
   YouTubeSearchResult,
+  YouTubePlaybackSource,
   YouTubeVideoInfo,
   YtDlpAppleProviderResult,
   YtDlpImportResult,
@@ -15,6 +16,7 @@ export type {
   YouTubeAudioFormat,
   YouTubeExtractionErrorPayload,
   YouTubeSearchResult,
+  YouTubePlaybackSource,
   YouTubeVideoInfo,
   YtDlpAppleProviderResult,
   YtDlpImportResult,
@@ -46,6 +48,16 @@ export class YouTubeSearchError extends Error {
   constructor({ code, message }: YouTubeExtractionErrorPayload) {
     super(message);
     this.name = 'YouTubeSearchError';
+    this.code = code;
+  }
+}
+
+export class YouTubePlaybackSourceError extends Error {
+  readonly code: string;
+
+  constructor({ code, message }: YouTubeExtractionErrorPayload) {
+    super(message);
+    this.name = 'YouTubePlaybackSourceError';
     this.code = code;
   }
 }
@@ -115,6 +127,23 @@ export async function extractYouTubeInfo(url: string): Promise<YouTubeVideoInfo 
     return await AuraNativeTestModule.extractYouTubeInfo(url);
   } catch (error) {
     throw toExtractionError(error);
+  }
+}
+
+export async function resolveYouTubePlaybackSource(
+  url: string,
+): Promise<YouTubePlaybackSource | string> {
+  try {
+    return await AuraNativeTestModule.resolveYouTubePlaybackSource(url);
+  } catch (error) {
+    const nativeError = error as { code?: unknown; message?: unknown };
+    throw new YouTubePlaybackSourceError({
+      code: typeof nativeError?.code === 'string' ? nativeError.code : 'NATIVE_ERROR',
+      message:
+        typeof nativeError?.message === 'string'
+          ? nativeError.message
+          : 'Errore sconosciuto durante la risoluzione del playback YouTube.',
+    });
   }
 }
 

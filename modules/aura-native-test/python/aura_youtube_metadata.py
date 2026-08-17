@@ -54,6 +54,9 @@ _SENSITIVE_PATTERN = re.compile(
     r"(?im)\b(authorization|cookie|set-cookie|x-goog-visitor-id|signature|sig|token)"
     r"\s*[:=]\s*[^\r\n]+"
 )
+_SENSITIVE_PLAYBACK_HEADERS = frozenset(
+    {"authorization", "cookie", "proxy-authorization", "set-cookie"}
+)
 
 
 class AuraYouTubeExtractionError(RuntimeError):
@@ -307,6 +310,116 @@ def _select_m4a_format(
             _nullable_string(item.get("format_id")) or "",
         ),
     )
+
+
+def _playback_headers(
+    info: Mapping[str, Any], selected_format: Mapping[str, Any]
+) -> dict[str, str]:
+    """Return yt-dlp's request headers without exposing cookie/auth material."""
+    headers: dict[str, str] = {}
+    for raw_headers in (info.get("http_headers"), selected_format.get("http_headers")):
+        if not isinstance(raw_headers, Mapping):
+            continue
+        for raw_name, raw_value in raw_headers.items():
+            if not isinstance(raw_name, str) or not isinstance(raw_value, str):
+                continue
+            name = raw_name.strip()
+            value = raw_value.strip()
+            if (
+                not name
+                or not value
+                or name.lower() in _SENSITIVE_PLAYBACK_HEADERS
+                or "\r" in name
+                or "\n" in name
+                or "\r" in value
+                or "\n" in value
+            ):
+                continue
+            headers[name] = value
+    return headers
+
+
+def _select_playback_format(info: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Choose a direct audio-only source that AVPlayer/expo-audio can consume."""
+    candidates: list[Mapping[str, Any]] = []
+    for item in info.get("formats") or []:
+        if not isinstance(item, Mapping):
+            continue
+        remote_uri = _nullable_string(item.get("url"))
+        try:
+            scheme = urlsplit(remote_uri or "").scheme.lower()
+        except ValueError:
+            scheme = ""
+        if (
+            item.get("vcodec") != "none"
+            or _nullable_string(item.get("acodec")) in (None, "none")
+            or _nullable_string(item.get("format_id")) is None
+            or scheme != "https"
+        ):
+            continue
+        candidates.append(item)
+
+    # AVPlayer reliably supports AAC audio in an M4A/MP4 container. YouTube's
+    # regular audio-only format 140 is the common result, but selection is based
+    # on metadata rather than a hard-coded format ID.
+    def compatibility_score(item: Mapping[str, Any]) -> int:
+        extension = (_nullable_string(item.get("ext")) or "").lower()
+        codec = (_nullable_string(item.get("acodec")) or "").lower()
+        if extension == "m4a" and codec.startswith("mp4a"):
+            return 3
+        if extension in ("mp4", "aac") and (
+            codec.startswith("mp4a") or codec.startswith("aac")
+        ):
+            return 2
+        if extension == "mp3" and "mp3" in codec:
+            return 1
+        return 0
+
+    ios_candidates = [item for item in candidates if compatibility_score(item) > 0]
+    if not ios_candidates:
+        raise AuraYouTubeExtractionError(
+            "NO_PLAYABLE_AUDIO",
+            "Il video non espone un formato audio diretto compatibile con iOS.",
+        )
+
+    return max(
+        ios_candidates,
+        key=lambda item: (
+            compatibility_score(item),
+            _nullable_number(item.get("abr")) or -1,
+            _nullable_number(item.get("tbr")) or -1,
+            _nullable_number(item.get("filesize"))
+            or _nullable_number(item.get("filesize_approx"))
+            or -1,
+        ),
+    )
+
+
+def _build_playback_dto(
+    info: Mapping[str, Any], selected_format: Mapping[str, Any]
+) -> dict[str, Any]:
+    video_id = _nullable_string(info.get("id"))
+    title = _nullable_string(info.get("title"))
+    remote_uri = _nullable_string(selected_format.get("url"))
+    format_id = _nullable_string(selected_format.get("format_id"))
+    if video_id is None or title is None or remote_uri is None or format_id is None:
+        raise AuraYouTubeExtractionError(
+            "INVALID_PLAYBACK_SOURCE",
+            "yt-dlp non ha restituito una sorgente audio completa.",
+        )
+
+    return {
+        "videoId": video_id,
+        "title": title,
+        "artist": _nullable_string(info.get("uploader"))
+        or _nullable_string(info.get("channel")),
+        "thumbnail": _nullable_string(info.get("thumbnail")),
+        "duration": _nullable_number(info.get("duration")),
+        "remoteUri": remote_uri,
+        "formatId": format_id,
+        "ext": _nullable_string(selected_format.get("ext")),
+        "headers": _playback_headers(info, selected_format),
+    }
 
 
 def _build_dto(info: Mapping[str, Any]) -> dict[str, Any]:
@@ -725,6 +838,98 @@ def _extract_info_with_access_retries(
             time.sleep(_MEDIA_ACCESS_RETRY_DELAY_SECONDS * attempt)
 
     raise RuntimeError(f"{operation} retry loop ended unexpectedly")
+
+
+def resolve_youtube_playback_source_json(raw_url: str) -> str:
+    """Resolve one ephemeral direct audio URL without downloading media."""
+    logger = AuraYtDlpLogger()
+    try:
+        url = _validate_url(raw_url)
+        provider = test_apple_webkit_provider()
+        logger.debug(
+            "Apple WebKit JS Challenge Provider ready for playback resolution: "
+            f"{provider['provider']} {provider['version']}"
+        )
+        options = {
+            "quiet": True,
+            "verbose": True,
+            "skip_download": True,
+            "simulate": True,
+            "noplaylist": True,
+            "socket_timeout": _NETWORK_TIMEOUT_SECONDS,
+            "retries": 1,
+            "extractor_retries": 1,
+            "fragment_retries": 0,
+            "cachedir": False,
+            "writethumbnail": False,
+            "writeinfojson": False,
+            "writesubtitles": False,
+            "writeautomaticsub": False,
+            "getcomments": False,
+            "logger": logger,
+        }
+        with YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not isinstance(info, Mapping):
+            raise AuraYouTubeExtractionError(
+                "INVALID_METADATA", "yt-dlp non ha restituito un video valido."
+            )
+        selected_format = _select_playback_format(info)
+        logger.debug(
+            "Resolved ephemeral iOS playback source: "
+            f"id={info.get('id', '<unknown>')} "
+            f"format={selected_format.get('format_id', '<unknown>')}"
+        )
+        return _success_envelope(_build_playback_dto(info, selected_format))
+    except AuraYouTubeExtractionError as error:
+        logger.error(f"{error.code}: {error.message}")
+        return _error_envelope(error)
+    except AuraYtDlpAppleProviderError as error:
+        logger.error(f"APPLE_PROVIDER_UNAVAILABLE: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "APPLE_PROVIDER_UNAVAILABLE",
+                "Il provider Apple WebKit non è disponibile nel runtime iOS.",
+            )
+        )
+    except (DownloadError, HTTPError) as error:
+        classified_error = _classify_download_error(error)
+        logger.error(f"{classified_error.code}: {error}")
+        return _error_envelope(classified_error)
+    except (socket.timeout, TimeoutError) as error:
+        logger.error(f"NETWORK_TIMEOUT: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "NETWORK_TIMEOUT", "La sorgente audio ha superato il timeout."
+            )
+        )
+    except CertificateVerifyError as error:
+        logger.error(f"TLS_ERROR: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "TLS_ERROR", "La connessione HTTPS a YouTube non ha superato la verifica TLS."
+            )
+        )
+    except (TransportError, RequestError) as error:
+        logger.error(f"NETWORK_ERROR: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "NETWORK_ERROR", "Impossibile contattare YouTube. Controlla la connessione."
+            )
+        )
+    except BaseException as error:
+        logger.error(f"PYTHON_ERROR: {type(error).__name__}: {error}")
+        print(
+            "AuraMusic playback source traceback:\n"
+            + _redact_log_message(traceback.format_exc()),
+            file=sys.stderr,
+            flush=True,
+        )
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "PYTHON_ERROR", "Errore Python durante la risoluzione della sorgente audio."
+            )
+        )
 
 
 def download_youtube_m4a_json(

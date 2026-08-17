@@ -70,3 +70,72 @@ export async function saveTrack(database: SQLiteDatabase, track: Track): Promise
 export async function deleteTrack(database: SQLiteDatabase, trackId: string): Promise<void> {
   await database.runAsync('DELETE FROM tracks WHERE id = ?', trackId);
 }
+
+export async function saveTrackWithPlaylistIds(
+  database: SQLiteDatabase,
+  track: Track,
+  playlistIds: readonly string[],
+): Promise<void> {
+  await database.withTransactionAsync(async () => {
+    await saveTrack(database, track);
+    const uniquePlaylistIds = [...new Set(playlistIds)];
+    const now = Date.now();
+    const previousMemberships = await database.getAllAsync<{ playlist_id: string }>(
+      'SELECT playlist_id FROM playlist_tracks WHERE track_id = ?',
+      track.id,
+    );
+    for (const playlistId of uniquePlaylistIds) {
+      const playlist = await database.getFirstAsync<{ id: string }>(
+        'SELECT id FROM playlists WHERE id = ?',
+        playlistId,
+      );
+      if (!playlist) {
+        throw new Error('Una playlist selezionata non esiste più.');
+      }
+    }
+
+    if (uniquePlaylistIds.length === 0) {
+      await database.runAsync('DELETE FROM playlist_tracks WHERE track_id = ?', track.id);
+    } else {
+      const placeholders = uniquePlaylistIds.map(() => '?').join(', ');
+      await database.runAsync(
+        `DELETE FROM playlist_tracks WHERE track_id = ? AND playlist_id NOT IN (${placeholders})`,
+        track.id,
+        ...uniquePlaylistIds,
+      );
+    }
+
+    for (const playlistId of uniquePlaylistIds) {
+      await database.runAsync(
+        `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
+         SELECT ?, ?, COALESCE(MAX(position) + 1, 0), ?
+         FROM playlist_tracks WHERE playlist_id = ?
+         ON CONFLICT(playlist_id, track_id) DO NOTHING`,
+        playlistId,
+        track.id,
+        now,
+        playlistId,
+      );
+    }
+    for (const playlistId of new Set([
+      ...previousMemberships.map((membership) => membership.playlist_id),
+      ...uniquePlaylistIds,
+    ])) {
+      await database.runAsync(
+        'UPDATE playlists SET updated_at = ? WHERE id = ?',
+        now,
+        playlistId,
+      );
+    }
+  });
+}
+
+export async function deleteTrackWithMemberships(
+  database: SQLiteDatabase,
+  trackId: string,
+): Promise<void> {
+  await database.withTransactionAsync(async () => {
+    await database.runAsync('DELETE FROM playlist_tracks WHERE track_id = ?', trackId);
+    await deleteTrack(database, trackId);
+  });
+}

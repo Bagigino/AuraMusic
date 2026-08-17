@@ -524,6 +524,94 @@ NSString * _Nullable AuraExtractYouTubeInfo(
   return result;
 }
 
+NSString * _Nullable AuraResolveYouTubePlaybackSource(
+  NSString *url,
+  NSString * _Nullable * _Nullable errorMessage
+) {
+  dispatch_once(&AuraPythonInitializationOnce, ^{
+    AuraInitializePython();
+  });
+
+  if (AuraPythonInitializationError != nil || !Py_IsInitialized()) {
+    AuraAssignError(errorMessage, AuraPythonInitializationError ?: @"CPython non e inizializzato.");
+    return nil;
+  }
+
+  PyGILState_STATE gilState = PyGILState_Ensure();
+  PyObject *module = PyImport_ImportModule("aura_youtube_metadata");
+  if (module == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Import del modulo playback YouTube fallito: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  PyObject *function = PyObject_GetAttrString(module, "resolve_youtube_playback_source_json");
+  if (function == NULL || !PyCallable_Check(function)) {
+    NSString *detail = PyErr_Occurred()
+      ? AuraCurrentPythonException()
+      : @"resolve_youtube_playback_source_json non e callable.";
+    Py_XDECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, [NSString stringWithFormat:
+      @"Funzione playback YouTube non valida: %@", detail]);
+    return nil;
+  }
+
+  PyObject *pythonUrl = AuraPythonUnicodeFromString(url);
+  if (pythonUrl == NULL) {
+    NSString *detail = PyErr_Occurred()
+      ? AuraCurrentPythonException()
+      : @"L'URL non e UTF-8 valido.";
+    Py_DECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, [NSString stringWithFormat:
+      @"Conversione URL playback fallita: %@", detail]);
+    return nil;
+  }
+
+  PyObject *pythonResult = PyObject_CallOneArg(function, pythonUrl);
+  Py_DECREF(pythonUrl);
+  Py_DECREF(function);
+  Py_DECREF(module);
+  if (pythonResult == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Risoluzione playback YouTube fallita: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  if (!PyUnicode_Check(pythonResult)) {
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, @"Il risultato playback YouTube non e una stringa JSON.");
+    return nil;
+  }
+
+  const char *resultUTF8 = PyUnicode_AsUTF8(pythonResult);
+  if (resultUTF8 == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Lettura del JSON playback fallita: %@", AuraCurrentPythonException()];
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  NSString *result = [NSString stringWithUTF8String:resultUTF8];
+  Py_DECREF(pythonResult);
+  PyGILState_Release(gilState);
+  if (result == nil) {
+    AuraAssignError(errorMessage, @"Il JSON playback YouTube non e UTF-8 valido.");
+    return nil;
+  }
+  return result;
+}
+
 NSString * _Nullable AuraSearchYouTube(
   NSString *query,
   NSInteger limit,

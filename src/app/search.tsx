@@ -6,10 +6,10 @@ import { AuraButton } from '@/components/aura-button';
 import { AuraScreen } from '@/components/aura-screen';
 import { TrackArtwork } from '@/components/track-artwork';
 import { AuraColors } from '@/constants/aura-theme';
+import { useAppAudioPlayer } from '@/audio/audio-player-context';
 import { useTrackLibrary } from '@/library/track-library-context';
 import { appYouTubeSearchService } from '@/services/app-youtube-search-service';
 import {
-  getSearchResultAnalyzeRoute,
   isSearchResultInLibrary,
   MAX_YOUTUBE_SEARCH_QUERY_LENGTH,
   type YouTubeSearchResult,
@@ -47,6 +47,7 @@ function getSearchErrorMessage(error: unknown) {
 export default function SearchScreen() {
   const router = useRouter();
   const { tracks } = useTrackLibrary();
+  const { playSearchResult } = useAppAudioPlayer();
   const [state, dispatch] = useReducer(
     youtubeSearchReducer,
     undefined,
@@ -72,7 +73,8 @@ export default function SearchScreen() {
   };
 
   const selectResult = (result: YouTubeSearchResult) => {
-    router.push(getSearchResultAnalyzeRoute(result));
+    playSearchResult(result, tracks);
+    router.push('/player');
   };
 
   return (
@@ -80,8 +82,8 @@ export default function SearchScreen() {
       title="Search"
       subtitle={
         Platform.OS === 'web'
-          ? 'La ricerca yt-dlp e disponibile soltanto nella build iOS nativa.'
-          : 'Cerca un video YouTube, poi analizzalo prima di scaricare il suo M4A.'
+          ? 'La versione web usa una sorgente streaming di prova locale.'
+          : 'Cerca un brano YouTube e toccalo per ascoltarlo subito in streaming.'
       }>
       <View style={styles.searchCard}>
         <Text style={styles.inputLabel}>YOUTUBE SEARCH</Text>
@@ -131,7 +133,7 @@ export default function SearchScreen() {
             const isInLibrary = isSearchResultInLibrary(result, tracks);
             return (
               <Pressable
-                accessibilityHint="Apre l'analisi completa prima del download"
+                accessibilityHint="Apre il Player senza scaricare il brano"
                 accessibilityRole="button"
                 key={result.id}
                 onPress={() => selectResult(result)}

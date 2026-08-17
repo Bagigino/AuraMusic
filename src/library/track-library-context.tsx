@@ -2,13 +2,18 @@ import { useSQLiteContext, type SQLiteDatabase } from 'expo-sqlite';
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useState } from 'react';
 
 import {
-  deleteTrack,
+  deleteTrackWithMemberships,
   getTrackById,
   getTracks,
   saveTrack,
+  saveTrackWithPlaylistIds,
 } from '@/database/track-repository';
 import { getDuplicateTrackStatus } from '@/library/track-duplicate-detection';
 import { applyLocalFileAvailability } from '@/library/track-file-validation';
+import {
+  saveTrackToPlaylists as coordinateTrackPlaylistSave,
+  type SaveTrackToPlaylistsResult,
+} from '@/library/save-track-to-playlists';
 import type { Track } from '@/models/track';
 import type {
   DownloadInfo,
@@ -16,6 +21,7 @@ import type {
   DownloadService,
 } from '@/services/download-service';
 import { localTrackFileExists } from '@/storage/music-file-storage';
+import { setTrackPlaylistIds } from '@/database/playlist-repository';
 import { getUserFacingError } from '@/utils/get-user-facing-error';
 
 export type AnalyzeTrackResult = {
@@ -37,6 +43,12 @@ type TrackLibraryContextValue = {
     onPhase?: (phase: AddTrackPhase) => void,
   ) => Promise<Track>;
   removeTrack: (track: Track) => Promise<void>;
+  saveTrackToPlaylists: (
+    videoId: string,
+    sourceUrl: string,
+    playlistIds: readonly string[],
+    onProgress?: DownloadProgressCallback,
+  ) => Promise<SaveTrackToPlaylistsResult>;
   refreshTracks: () => Promise<void>;
 };
 
@@ -181,7 +193,7 @@ export function TrackLibraryProvider({
     async (track: Track) => {
       setError(null);
       try {
-        await deleteTrack(database, track.id);
+        await deleteTrackWithMemberships(database, track.id);
       } catch (deleteDatabaseError) {
         console.error('AuraMusic SQLite track deletion failed', deleteDatabaseError);
         const operationError = new TrackLibraryError(
@@ -211,6 +223,59 @@ export function TrackLibraryProvider({
     [database, downloadService],
   );
 
+  const saveTrackToPlaylists = useCallback(
+    async (
+      videoId: string,
+      sourceUrl: string,
+      playlistIds: readonly string[],
+      onProgress?: DownloadProgressCallback,
+    ) => {
+      setError(null);
+      try {
+        const result = await coordinateTrackPlaylistSave(
+          {
+            findTrack: (id) => getTrackById(database, id),
+            localFileExists: localTrackFileExists,
+            downloadAudio: (url, progress) => downloadService.downloadAudio(url, progress),
+            persistTrackWithPlaylists: async (track, ids) => {
+              try {
+                await saveTrackWithPlaylistIds(database, track, ids);
+              } catch (databaseError) {
+                console.error('AuraMusic Track/playlist transaction failed', databaseError);
+                throw new TrackLibraryError(
+                  'SQLITE_SAVE_FAILED',
+                  'Il download è completo, ma il salvataggio nella Library non è riuscito.',
+                );
+              }
+            },
+            setExistingTrackPlaylists: async (trackId, ids) => {
+              try {
+                await setTrackPlaylistIds(database, trackId, ids);
+              } catch (databaseError) {
+                console.error('AuraMusic playlist membership update failed', databaseError);
+                throw new TrackLibraryError(
+                  'SQLITE_SAVE_FAILED',
+                  'Non è stato possibile aggiornare le playlist del brano.',
+                );
+              }
+            },
+            deleteAudio: (track) => downloadService.deleteAudio(track),
+          },
+          { videoId, sourceUrl, playlistIds, onProgress },
+        );
+        setTracks((currentTracks) => {
+          const withoutTrack = currentTracks.filter((track) => track.id !== result.track.id);
+          return [result.track, ...withoutTrack];
+        });
+        return result;
+      } catch (saveError) {
+        setError(getUserFacingError(saveError));
+        throw saveError;
+      }
+    },
+    [database, downloadService],
+  );
+
   return (
     <TrackLibraryContext.Provider
       value={{
@@ -220,6 +285,7 @@ export function TrackLibraryProvider({
         analyzeTrack,
         addTrack,
         removeTrack,
+        saveTrackToPlaylists,
         refreshTracks,
       }}>
       {children}
