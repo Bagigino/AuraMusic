@@ -26,6 +26,7 @@ mkdir -p "$WORK_DIRECTORY" "$(dirname "$OUTPUT_XCFRAMEWORK")"
 ARCHIVE="$WORK_DIRECTORY/Python-$CPYTHON_VERSION.tar.xz"
 SOURCE_DIRECTORY="$WORK_DIRECTORY/Python-$CPYTHON_VERSION"
 HOST_BUILD_DIRECTORY="$WORK_DIRECTORY/host-build"
+HOST_TOOL_DIRECTORY="$WORK_DIRECTORY/host-tools"
 DEVICE_BUILD_DIRECTORY="$WORK_DIRECTORY/arm64-apple-ios-build"
 DEVICE_INSTALL_DIRECTORY="$WORK_DIRECTORY/arm64-apple-ios-install"
 
@@ -56,12 +57,29 @@ test -x "$HOST_BUILD_DIRECTORY/python" || {
 
 BUILD_TRIPLE="$($SOURCE_DIRECTORY/config.guess)"
 IOS_TOOL_PATH="$SOURCE_DIRECTORY/Apple/iOS/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin"
+mkdir -p "$HOST_TOOL_DIRECTORY"
+ln -s "$HOST_BUILD_DIRECTORY/python" "$HOST_TOOL_DIRECTORY/python3.14"
+CROSS_BUILD_PATH="$HOST_TOOL_DIRECTORY:$IOS_TOOL_PATH"
+
+# CPython's cross-configure validates --with-build-python with `command -v`.
+# Expose the freshly built interpreter as a command on the same restricted PATH
+# used for the iOS build, then verify both command resolution and its version.
+PATH="$CROSS_BUILD_PATH" command -v python3.14 >/dev/null || {
+  echo "The host CPython build interpreter is not resolvable as python3.14." >&2
+  exit 1
+}
+
+HOST_PYTHON_VERSION="$(PATH="$CROSS_BUILD_PATH" python3.14 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+if [[ "$HOST_PYTHON_VERSION" != "3.14" ]]; then
+  echo "The host build interpreter has version $HOST_PYTHON_VERSION; expected 3.14." >&2
+  exit 1
+fi
 
 echo "Cross-compiling a dependency-minimal CPython framework for arm64 iPhone devices"
 mkdir -p "$DEVICE_BUILD_DIRECTORY"
 (
   cd "$DEVICE_BUILD_DIRECTORY"
-  PATH="$IOS_TOOL_PATH" \
+  PATH="$CROSS_BUILD_PATH" \
   IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
   CC=arm64-apple-ios-clang \
   CXX=arm64-apple-ios-clang++ \
@@ -71,13 +89,13 @@ mkdir -p "$DEVICE_BUILD_DIRECTORY"
   "$SOURCE_DIRECTORY/configure" \
     "--host=arm64-apple-ios$IOS_DEPLOYMENT_TARGET" \
     "--build=$BUILD_TRIPLE" \
-    "--with-build-python=$HOST_BUILD_DIRECTORY/python" \
+    --with-build-python=python3.14 \
     "--enable-framework=$DEVICE_INSTALL_DIRECTORY" \
     --without-ensurepip \
     --disable-test-modules
 
-  PATH="$IOS_TOOL_PATH" make -j "$JOBS"
-  PATH="$IOS_TOOL_PATH" make install
+  PATH="$CROSS_BUILD_PATH" make -j "$JOBS"
+  PATH="$CROSS_BUILD_PATH" make install
 )
 
 PYTHON_FRAMEWORK="$DEVICE_INSTALL_DIRECTORY/Python.framework"
