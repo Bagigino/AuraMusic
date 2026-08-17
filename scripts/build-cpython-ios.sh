@@ -5,6 +5,10 @@ set -euo pipefail
 CPYTHON_VERSION="${CPYTHON_VERSION:-3.14.7}"
 CPYTHON_SOURCE_SHA256="${CPYTHON_SOURCE_SHA256:-3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81}"
 IOS_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET:-16.4}"
+LIBFFI_RELEASE="${LIBFFI_RELEASE:-3.4.7-2}"
+LIBFFI_ARCHIVE_SHA256="${LIBFFI_ARCHIVE_SHA256:-4b20898346fb5b0875f30596d98a62d418acc225ad0a518fdf440d8496ec6b71}"
+OPENSSL_RELEASE="${OPENSSL_RELEASE:-3.5.7-1}"
+OPENSSL_ARCHIVE_SHA256="${OPENSSL_ARCHIVE_SHA256:-a8029ddd84e722411cdceca1531d79a583991c76ba9821f9f4b7ed5a288399b3}"
 
 if [[ $# -ne 2 ]]; then
   echo "Usage: $0 <work-directory> <output-Python.xcframework>" >&2
@@ -28,6 +32,8 @@ SOURCE_DIRECTORY="$WORK_DIRECTORY/Python-$CPYTHON_VERSION"
 HOST_BUILD_DIRECTORY="$WORK_DIRECTORY/host-build"
 DEVICE_BUILD_DIRECTORY="$WORK_DIRECTORY/arm64-apple-ios-build"
 DEVICE_INSTALL_DIRECTORY="$WORK_DIRECTORY/arm64-apple-ios-install"
+IOS_DEPENDENCY_DIRECTORY="$WORK_DIRECTORY/ios-dependencies"
+IOS_DEPENDENCY_PREFIX="$IOS_DEPENDENCY_DIRECTORY/prefix"
 
 echo "Downloading official CPython $CPYTHON_VERSION source release from python.org"
 curl -fL --retry 5 --retry-all-errors \
@@ -36,6 +42,29 @@ curl -fL --retry 5 --retry-all-errors \
 
 echo "$CPYTHON_SOURCE_SHA256  $ARCHIVE" | shasum -a 256 --check
 tar -xf "$ARCHIVE" -C "$WORK_DIRECTORY"
+
+mkdir -p "$IOS_DEPENDENCY_DIRECTORY" "$IOS_DEPENDENCY_PREFIX"
+
+LIBFFI_ARCHIVE="$IOS_DEPENDENCY_DIRECTORY/libffi-$LIBFFI_RELEASE-iphoneos.arm64.tar.gz"
+echo "Downloading CPython iOS libffi support $LIBFFI_RELEASE"
+curl -fL --retry 5 --retry-all-errors \
+  "https://github.com/beeware/cpython-apple-source-deps/releases/download/libFFI-$LIBFFI_RELEASE/libffi-$LIBFFI_RELEASE-iphoneos.arm64.tar.gz" \
+  -o "$LIBFFI_ARCHIVE"
+echo "$LIBFFI_ARCHIVE_SHA256  $LIBFFI_ARCHIVE" | shasum -a 256 --check
+tar -xf "$LIBFFI_ARCHIVE" -C "$IOS_DEPENDENCY_PREFIX"
+
+OPENSSL_ARCHIVE="$IOS_DEPENDENCY_DIRECTORY/openssl-$OPENSSL_RELEASE-iphoneos.arm64.tar.gz"
+echo "Downloading CPython iOS OpenSSL support $OPENSSL_RELEASE"
+curl -fL --retry 5 --retry-all-errors \
+  "https://github.com/beeware/cpython-apple-source-deps/releases/download/OpenSSL-$OPENSSL_RELEASE/openssl-$OPENSSL_RELEASE-iphoneos.arm64.tar.gz" \
+  -o "$OPENSSL_ARCHIVE"
+echo "$OPENSSL_ARCHIVE_SHA256  $OPENSSL_ARCHIVE" | shasum -a 256 --check
+tar -xf "$OPENSSL_ARCHIVE" -C "$IOS_DEPENDENCY_PREFIX"
+
+test -f "$IOS_DEPENDENCY_PREFIX/lib/libffi.a"
+test -f "$IOS_DEPENDENCY_PREFIX/lib/libssl.a"
+test -f "$IOS_DEPENDENCY_PREFIX/lib/libcrypto.a"
+test -f "$IOS_DEPENDENCY_PREFIX/share/OpenSSL.xcprivacy"
 
 JOBS="$(sysctl -n hw.ncpu)"
 
@@ -90,6 +119,9 @@ mkdir -p "$DEVICE_BUILD_DIRECTORY"
     "--build=$BUILD_TRIPLE" \
     "--with-build-python=$HOST_BUILD_PYTHON" \
     "--enable-framework=$DEVICE_INSTALL_DIRECTORY" \
+    "--with-openssl=$IOS_DEPENDENCY_PREFIX" \
+    "LIBFFI_CFLAGS=-I$IOS_DEPENDENCY_PREFIX/include" \
+    "LIBFFI_LIBS=-L$IOS_DEPENDENCY_PREFIX/lib -lffi" \
     --without-ensurepip \
     --disable-test-modules
 
@@ -122,11 +154,25 @@ test -n "$XCFRAMEWORK_SLICE" || {
 
 # iOS frameworks cannot contain the standard library. Keep it beside the
 # framework slice, matching the layout consumed by CPython's official Xcode
-# install helper. Binary stdlib extensions are intentionally omitted in this
-# dependency-minimal 2 + 2 proof of concept.
+# install helper. Its build phase converts standard-library .so files into
+# loadable iOS frameworks inside the final app bundle.
 cp -R "$DEVICE_INSTALL_DIRECTORY/lib" "$XCFRAMEWORK_SLICE/lib"
-find "$XCFRAMEWORK_SLICE/lib" -type f -name '*.so' -delete
-mkdir -p "$XCFRAMEWORK_SLICE/lib/python3.14/lib-dynload"
+DYNLIB_DIRECTORY="$XCFRAMEWORK_SLICE/lib/python3.14/lib-dynload"
+test -d "$DYNLIB_DIRECTORY"
+
+for required_module in _ctypes _socket _ssl select unicodedata; do
+  if ! find "$DYNLIB_DIRECTORY" -maxdepth 1 -type f -name "$required_module*.so" -print -quit | grep -q .; then
+    echo "Required CPython extension module was not built for iOS: $required_module" >&2
+    exit 1
+  fi
+done
+
+for openssl_module in _hashlib _ssl; do
+  if find "$DYNLIB_DIRECTORY" -maxdepth 1 -type f -name "$openssl_module*.so" -print -quit | grep -q .; then
+    cp "$IOS_DEPENDENCY_PREFIX/share/OpenSSL.xcprivacy" \
+      "$DYNLIB_DIRECTORY/$openssl_module.xcprivacy"
+  fi
+done
 
 mkdir -p "$OUTPUT_XCFRAMEWORK/build"
 cp "$SOURCE_DIRECTORY/Apple/testbed/Python.xcframework/build/utils.sh" \

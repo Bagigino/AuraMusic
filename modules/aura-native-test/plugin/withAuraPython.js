@@ -6,11 +6,13 @@ const { IOSConfig, withXcodeProject } = require('@expo/config-plugins');
 const BUILD_PHASE_NAME = 'Install embedded CPython';
 const FRAMEWORK_RELATIVE_TO_IOS = '../modules/aura-native-test/ios/Python.xcframework';
 const PYTHON_APP_RELATIVE_TO_IOS = '../modules/aura-native-test/python';
+const PYTHON_VENDOR_RELATIVE_TO_IOS = '../modules/aura-native-test/python-vendor';
 
 const BUILD_PHASE_SCRIPT = `set -e
 
 PYTHON_XCFRAMEWORK_PATH="${FRAMEWORK_RELATIVE_TO_IOS}"
 PYTHON_APP_PATH="$PROJECT_DIR/${PYTHON_APP_RELATIVE_TO_IOS}"
+PYTHON_VENDOR_PATH="$PROJECT_DIR/${PYTHON_VENDOR_RELATIVE_TO_IOS}"
 
 test -d "$PROJECT_DIR/$PYTHON_XCFRAMEWORK_PATH" || {
   echo "error: Python.xcframework is missing. Prepare CPython before building iOS."
@@ -22,12 +24,30 @@ test -f "$PYTHON_APP_PATH/aura_test.py" || {
   exit 1
 }
 
+test -f "$PYTHON_VENDOR_PATH/yt_dlp/__init__.py" || {
+  echo "error: Vendored yt_dlp package is missing from the local Expo module."
+  exit 1
+}
+
+test -f "$PYTHON_VENDOR_PATH/yt_dlp/version.py" || {
+  echo "error: Vendored yt_dlp version module is missing from the local Expo module."
+  exit 1
+}
+
 rm -rf "$CODESIGNING_FOLDER_PATH/app"
 mkdir -p "$CODESIGNING_FOLDER_PATH/app"
 rsync -a "$PYTHON_APP_PATH/" "$CODESIGNING_FOLDER_PATH/app/"
 
+rm -rf "$CODESIGNING_FOLDER_PATH/python-vendor"
+mkdir -p "$CODESIGNING_FOLDER_PATH/python-vendor"
+rsync -a "$PYTHON_VENDOR_PATH/" "$CODESIGNING_FOLDER_PATH/python-vendor/"
+
 source "$PROJECT_DIR/$PYTHON_XCFRAMEWORK_PATH/build/utils.sh"
-install_python "$PYTHON_XCFRAMEWORK_PATH" app
+# The official CPython helper signs generated extension frameworks. In an
+# otherwise unsigned build, use only an ad-hoc identity; Sideloadly will later
+# replace it together with the app signature.
+export EXPANDED_CODE_SIGN_IDENTITY="\${EXPANDED_CODE_SIGN_IDENTITY:--}"
+install_python "$PYTHON_XCFRAMEWORK_PATH" app python-vendor
 `;
 
 function findApplicationTarget(project, projectName) {
@@ -107,6 +127,21 @@ module.exports = function withAuraPython(config) {
     if (!fs.existsSync(frameworkPath)) {
       throw new Error(
         `AuraNativeTest requires Python.xcframework before iOS prebuild. Missing: ${frameworkPath}`,
+      );
+    }
+
+    const ytDlpVersionPath = path.join(
+      modConfig.modRequest.projectRoot,
+      'modules',
+      'aura-native-test',
+      'python-vendor',
+      'yt_dlp',
+      'version.py',
+    );
+
+    if (!fs.existsSync(ytDlpVersionPath)) {
+      throw new Error(
+        `AuraNativeTest requires vendored yt-dlp before iOS prebuild. Missing: ${ytDlpVersionPath}`,
       );
     }
 

@@ -6,7 +6,9 @@ Questo step integra **CPython 3.14.7** in modalità embedded esclusivamente per 
 TypeScript → Expo Module → Swift → Objective-C → CPython → aura_test.py → 4
 ~~~
 
-Non include yt-dlp, yt-dlp-ejs, QuickJS, FFmpeg, YouTube, download audio o `pip` a runtime.
+Il POC iniziale è ora affiancato dal solo test d'import di yt-dlp descritto in
+`docs/YTDLP_IOS_IMPORT_POC.md`. Non include yt-dlp-ejs, QuickJS, FFmpeg,
+download YouTube, download audio o `pip` a runtime.
 
 ## Origine e build di CPython
 
@@ -18,7 +20,11 @@ Il workflow scarica il source tarball ufficiale `Python-3.14.7.tar.xz` da `pytho
 
 Lo script `scripts/build-cpython-ios.sh` compila prima lo stesso sorgente per macOS, da usare come build interpreter, poi esegue il cross-build documentato da CPython per `arm64-apple-ios` con deployment target iOS 16.4. Infine crea `Python.xcframework` con `xcodebuild -create-xcframework`.
 
-Non viene scaricato un XCFramework precompilato e non vengono scaricati binari da repository di terze parti. Per questo POC non sono incluse dipendenze native opzionali di CPython; le estensioni `.so` della standard library vengono escluse dal bundle. Il calcolo `2 + 2`, gli import puramente Python e il runtime CPython restano reali.
+Non viene scaricato un XCFramework CPython precompilato. Per consentire
+l'import reale di yt-dlp, la build usa gli archivi iOS ufficialmente indicati
+dalla documentazione CPython per libffi e OpenSSL, ne verifica gli SHA-256 e
+conserva le estensioni standard necessarie. Il calcolo `2 + 2`, gli import
+Python e il runtime CPython restano reali.
 
 Il framework risultante viene conservato dalla cache GitHub Actions con una chiave che comprende versione CPython e hash dello script di build. È volutamente limitato al device iOS arm64 e non supporta il simulatore.
 

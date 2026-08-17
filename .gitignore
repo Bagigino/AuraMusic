@@ -44,3 +44,6 @@ example
 
 # Generated in macOS CI from the pinned official CPython source release
 /modules/aura-native-test/ios/Python.xcframework
+
+# Generated in CI from the exact pinned PyPI package
+/modules/aura-native-test/python-vendor

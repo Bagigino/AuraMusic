@@ -1,1 +1,6 @@
-export { getNativeMessage, testPython } from '../../modules/aura-native-test';
+export {
+  getNativeMessage,
+  testPython,
+  testYtDlpImport,
+  type YtDlpImportResult,
+} from '../../modules/aura-native-test';

@@ -15,6 +15,11 @@ const unavailableModule: AuraNativeTestModuleApi = {
       'CPython non è incluso in questo client. Installa una development build iOS.',
     );
   },
+  async testYtDlpImport() {
+    throw new Error(
+      'yt-dlp non è incluso in questo client. Installa una development build iOS.',
+    );
+  },
 };
 
 export default nativeModule ?? unavailableModule;

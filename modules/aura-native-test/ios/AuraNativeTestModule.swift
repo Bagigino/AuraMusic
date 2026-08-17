@@ -9,6 +9,11 @@ private struct AuraPythonRuntimeError: Error, LocalizedError {
   }
 }
 
+private struct AuraYtDlpImportResult: Record {
+  @Field var success: Bool = true
+  @Field var version: String = ""
+}
+
 public class AuraNativeTestModule: Module {
   public func definition() -> ModuleDefinition {
     Name("AuraNativeTest")
@@ -25,6 +30,21 @@ public class AuraNativeTestModule: Module {
         throw AuraPythonRuntimeError(message: pythonError as String)
       }
 
+      return result
+    }
+
+    AsyncFunction("testYtDlpImport") { () throws -> AuraYtDlpImportResult in
+      var pythonError: NSString?
+      guard let version = AuraTestYtDlpImport(&pythonError) else {
+        let message = pythonError.map { $0 as String }
+          ?? "Import yt-dlp fallito senza dettagli."
+        throw AuraPythonRuntimeError(
+          message: message
+        )
+      }
+
+      var result = AuraYtDlpImportResult()
+      result.version = version as String
       return result
     }
   }

@@ -26,7 +26,10 @@ Per aprire anche la versione web, premi `w` nel terminale. La configurazione Met
 - `src/library`: stato applicativo della libreria.
 - `src/app`: schermate Expo Router `Library`, `Player` e `Add Track`.
 
-Questa versione non contiene YouTube, `yt-dlp` o codice nativo. In futuro l’implementazione di `DownloadService` potrà essere sostituita senza modificare database, player o UI.
+Questa versione non contiene download YouTube. Il modulo iOS locale include
+CPython e il solo package core `yt-dlp==2026.07.04` per il test d'import e di
+lettura versione; non lo collega ancora a `DownloadService`. I dettagli sono in
+[`docs/YTDLP_IOS_IMPORT_POC.md`](docs/YTDLP_IOS_IMPORT_POC.md).
 
 Sul web il MOCK riproduce l’asset del bundle e SQLite conserva i metadata nel browser, ma non esiste una vera directory `Documents/music`: la copia persistente e la garanzia offline vanno verificate su iOS tramite Expo Go.
 

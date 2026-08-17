@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { AuraButton } from '@/components/aura-button';
 import { AuraColors } from '@/constants/aura-theme';
-import { getNativeMessage, testPython } from '@/native/aura-native-test';
+import { getNativeMessage, testPython, testYtDlpImport } from '@/native/aura-native-test';
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Errore sconosciuto durante il test nativo.';
@@ -12,8 +12,9 @@ function getErrorMessage(error: unknown) {
 export function NativeModuleDebugCard() {
   const [message, setMessage] = useState<string | null>(null);
   const [pythonMessage, setPythonMessage] = useState<string | null>(null);
+  const [ytDlpMessage, setYtDlpMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTest, setActiveTest] = useState<'native' | 'python' | null>(null);
+  const [activeTest, setActiveTest] = useState<'native' | 'python' | 'yt-dlp' | null>(null);
 
   const handleTest = async () => {
     setActiveTest('native');
@@ -44,6 +45,23 @@ export function NativeModuleDebugCard() {
     }
   };
 
+  const handleYtDlpTest = async () => {
+    setActiveTest('yt-dlp');
+    setYtDlpMessage(null);
+    setError(null);
+
+    try {
+      const result = await testYtDlpImport();
+      setYtDlpMessage(
+        typeof result === 'string' ? result : `yt-dlp imported: ${result.version}`,
+      );
+    } catch (testError) {
+      setError(getErrorMessage(testError));
+    } finally {
+      setActiveTest(null);
+    }
+  };
+
   return (
     <View style={styles.card}>
       <Text style={styles.eyebrow}>DEBUG · EXPO MODULES API</Text>
@@ -66,9 +84,17 @@ export function NativeModuleDebugCard() {
         onPress={() => void handlePythonTest()}
         variant="secondary"
       />
+      <AuraButton
+        label="Test yt-dlp"
+        disabled={activeTest !== null}
+        loading={activeTest === 'yt-dlp'}
+        onPress={() => void handleYtDlpTest()}
+        variant="secondary"
+      />
 
       {message && <Text style={styles.success}>{message}</Text>}
       {pythonMessage && <Text style={styles.success}>{pythonMessage}</Text>}
+      {ytDlpMessage && <Text style={styles.success}>{ytDlpMessage}</Text>}
       {error && <Text style={styles.error}>{error}</Text>}
     </View>
   );

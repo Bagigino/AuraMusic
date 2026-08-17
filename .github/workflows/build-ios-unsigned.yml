@@ -18,6 +18,8 @@ jobs:
       CPYTHON_SOURCE_SHA256: 3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81
       IOS_DEPLOYMENT_TARGET: '16.4'
       PYTHON_XCFRAMEWORK_PATH: modules/aura-native-test/ios/Python.xcframework
+      YT_DLP_VERSION: '2026.07.04'
+      YT_DLP_VENDOR_PATH: modules/aura-native-test/python-vendor
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
 
@@ -30,6 +32,71 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+
+      - name: Set up Python build tooling
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14.7'
+
+      - name: Vendor pinned yt-dlp package
+        shell: bash
+        run: |
+          if [ -e "$YT_DLP_VENDOR_PATH" ]; then
+            echo "::error title=Unsafe vendor path::Expected a fresh yt-dlp vendor directory at $YT_DLP_VENDOR_PATH."
+            exit 1
+          fi
+
+          mkdir -p "$YT_DLP_VENDOR_PATH"
+          if ! python3 -m pip install \
+            --disable-pip-version-check \
+            --target "$YT_DLP_VENDOR_PATH" \
+            --no-compile \
+            --no-deps \
+            "yt-dlp==$YT_DLP_VERSION"; then
+            echo "::error title=yt-dlp vendoring failed::Could not install the pinned yt-dlp package."
+            exit 1
+          fi
+
+          # Console launchers, shell completions and man pages cannot be used by
+          # the embedded interpreter. Keep the Python package and dist-info only.
+          rm -rf "$YT_DLP_VENDOR_PATH/bin" "$YT_DLP_VENDOR_PATH/share"
+
+          test -f "$YT_DLP_VENDOR_PATH/yt_dlp/__init__.py" || {
+            echo "::error title=yt-dlp package missing::yt_dlp/__init__.py was not vendored."
+            exit 1
+          }
+
+          test -f "$YT_DLP_VENDOR_PATH/yt_dlp/version.py" || {
+            echo "::error title=yt-dlp version module missing::yt_dlp/version.py was not vendored."
+            exit 1
+          }
+
+          PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$YT_DLP_VENDOR_PATH" \
+            python3 - "$YT_DLP_VERSION" <<'PYTHON'
+          import sys
+          import yt_dlp
+          from yt_dlp.version import __version__
+
+          expected = sys.argv[1]
+          if __version__ != expected:
+              raise SystemExit(
+                  f"Vendored yt-dlp version mismatch: expected {expected}, found {__version__}"
+              )
+          print(f"Verified vendored yt-dlp {__version__}")
+          PYTHON
+
+          if [ -e "$YT_DLP_VENDOR_PATH/yt_dlp_ejs" ]; then
+            echo "::error title=Unexpected optional dependency::yt-dlp-ejs must not be vendored in this proof of concept."
+            exit 1
+          fi
+
+          VENDOR_BYTES=$(du -sk "$YT_DLP_VENDOR_PATH" | awk '{ print $1 * 1024 }')
+          {
+            echo "### Vendored Python package"
+            echo "- yt-dlp version: $YT_DLP_VERSION"
+            echo "- Source directory: $YT_DLP_VENDOR_PATH"
+            echo "- Uncompressed bytes: $VENDOR_BYTES"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Initialize build paths
         shell: bash
@@ -66,7 +133,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.PYTHON_XCFRAMEWORK_PATH }}
-          key: cpython-ios-${{ env.CPYTHON_VERSION }}-arm64-minimal-${{ hashFiles('scripts/build-cpython-ios.sh') }}
+          key: cpython-ios-${{ env.CPYTHON_VERSION }}-arm64-yt-dlp-import-${{ hashFiles('scripts/build-cpython-ios.sh') }}
 
       - name: Build embedded CPython framework
         if: steps.cpython-cache.outputs.cache-hit != 'true'
@@ -111,6 +178,21 @@ jobs:
             echo "::error title=Invalid CPython architecture::Python.framework does not contain arm64."
             exit 1
           fi
+
+
+          DYNLIB_DIRECTORY=$(find "$PYTHON_XCFRAMEWORK_PATH" \
+            -path '*/lib/python3.14/lib-dynload' -type d -print -quit)
+          test -n "$DYNLIB_DIRECTORY" || {
+            echo "::error title=CPython extension directory missing::lib-dynload was not found."
+            exit 1
+          }
+
+          for required_module in _ctypes _socket _ssl select unicodedata; do
+            if ! find "$DYNLIB_DIRECTORY" -maxdepth 1 -type f -name "$required_module*.so" -print -quit | grep -q .; then
+              echo "::error title=CPython extension missing::$required_module is required to import yt-dlp on iOS."
+              exit 1
+            fi
+          done
 
       - name: Install JavaScript dependencies
         run: npm ci
@@ -163,6 +245,12 @@ jobs:
 
           test -f modules/aura-native-test/python/aura_test.py || {
             echo "::error title=Python test missing::aura_test.py was not found."
+            exit 1
+          }
+
+
+          test -f "$YT_DLP_VENDOR_PATH/yt_dlp/version.py" || {
+            echo "::error title=Vendored yt-dlp missing::yt_dlp/version.py was not found before Expo Prebuild."
             exit 1
           }
 
@@ -341,6 +429,30 @@ jobs:
             exit 1
           }
 
+
+          test -f "$APP_PATH/python-vendor/yt_dlp/__init__.py" || {
+            echo "::error title=Vendored yt-dlp missing::yt_dlp/__init__.py was not found in the app bundle."
+            exit 1
+          }
+
+          YT_DLP_BUNDLED_VERSION_FILE="$APP_PATH/python-vendor/yt_dlp/version.py"
+          test -f "$YT_DLP_BUNDLED_VERSION_FILE" || {
+            echo "::error title=yt-dlp version module missing::yt_dlp/version.py was not found in the app bundle."
+            exit 1
+          }
+
+          if ! grep -Fq "__version__ = '$YT_DLP_VERSION'" "$YT_DLP_BUNDLED_VERSION_FILE"; then
+            echo "::error title=yt-dlp bundle version mismatch::The app bundle does not contain yt-dlp $YT_DLP_VERSION."
+            exit 1
+          fi
+
+          for required_module in _ctypes _socket _ssl select unicodedata; do
+            test -f "$APP_PATH/Frameworks/$required_module.framework/$required_module" || {
+              echo "::error title=CPython runtime extension missing::$required_module.framework was not installed in the app bundle."
+              exit 1
+            }
+          done
+
           if ! otool -L "$APP_EXECUTABLE" | grep -Fq 'Python.framework/Python'; then
             echo "::error title=CPython not linked::The AuraMusic executable is not linked to Python.framework."
             exit 1
@@ -350,6 +462,8 @@ jobs:
           echo "- App bundle: $APP_PATH" >> "$GITHUB_STEP_SUMMARY"
           echo "- Embedded CPython: $PYTHON_FRAMEWORK" >> "$GITHUB_STEP_SUMMARY"
           echo "- CPython version: $CPYTHON_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "- yt-dlp version: $YT_DLP_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "- yt-dlp bundle path: $APP_PATH/python-vendor/yt_dlp" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package unsigned IPA
         id: package
