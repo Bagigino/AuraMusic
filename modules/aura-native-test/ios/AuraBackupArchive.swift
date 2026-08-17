@@ -276,7 +276,6 @@ enum AuraBackupArchive {
       guard centralOffset <= UInt64(UInt32.max) else {
         throw AuraBackupArchiveError(code: "BACKUP_TOO_LARGE", message: "L'archivio supera il limite ZIP supportato.")
       }
-      let (zipTime, zipDate) = auraZipTimestamp()
       for entry in writtenEntries {
         var header = Data()
         header.appendLittleEndian(AuraZip.centralHeader)

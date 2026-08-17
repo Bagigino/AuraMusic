@@ -539,26 +539,58 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build unsigned Release for iphoneos
+        id: xcode-build
         shell: bash
         run: |
           set -o pipefail
-          if ! xcodebuild \
+          XCODEBUILD_LOG="$RUNNER_TEMP/xcodebuild.log"
+          XCODEBUILD_RESULT="$RUNNER_TEMP/AuraMusicBuild.xcresult"
+
+          set +e
+          xcodebuild \
             -workspace "${{ steps.ios-project.outputs.workspace }}" \
             -scheme "${{ steps.ios-project.outputs.scheme }}" \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$DERIVED_DATA_PATH" \
+            -resultBundlePath "$XCODEBUILD_RESULT" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= \
             DEVELOPMENT_TEAM= \
             PROVISIONING_PROFILE= \
             PROVISIONING_PROFILE_SPECIFIER= \
-            clean build | tee "$RUNNER_TEMP/xcodebuild.log"; then
+            clean build 2>&1 | tee "$XCODEBUILD_LOG"
+          XCODEBUILD_STATUS=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$XCODEBUILD_STATUS" -ne 0 ]; then
+            echo "::group::Relevant xcodebuild diagnostics"
+            grep -n -B 4 -A 12 -E \
+              '(^|[[:space:]])(fatal )?error:|BUILD FAILED|The following build commands failed|Command .* failed with a nonzero exit code' \
+              "$XCODEBUILD_LOG" | tail -n 500 || true
+            echo "::endgroup::"
+
+            echo "::group::Final 250 xcodebuild lines"
+            tail -n 250 "$XCODEBUILD_LOG" || true
+            echo "::endgroup::"
+
             echo "::error title=xcodebuild failed::The unsigned Release build did not complete."
-            exit 1
+            exit "$XCODEBUILD_STATUS"
           fi
+
+      - name: Upload failed iOS build diagnostics
+        if: failure() && steps.xcode-build.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: AuraMusic-ios-build-diagnostics
+          path: |
+            ${{ runner.temp }}/xcodebuild.log
+            ${{ runner.temp }}/AuraMusicBuild.xcresult
+          if-no-files-found: warn
+          compression-level: 6
+          retention-days: 7
 
       - name: Locate app and verify native module in binary
         id: app-bundle
