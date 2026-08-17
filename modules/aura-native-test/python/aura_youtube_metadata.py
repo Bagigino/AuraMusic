@@ -9,6 +9,7 @@ import os
 import re
 import socket
 import sys
+import time
 import traceback
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -40,6 +41,8 @@ _NETWORK_TIMEOUT_SECONDS = 25
 _DOWNLOAD_RETRIES = 3
 _EXTRACTOR_RETRIES = 2
 _FRAGMENT_RETRIES = 3
+_MEDIA_ACCESS_ATTEMPTS = 3
+_MEDIA_ACCESS_RETRY_DELAY_SECONDS = 1.0
 _DEFAULT_SEARCH_LIMIT = 10
 _MAX_SEARCH_LIMIT = 20
 _MAX_SEARCH_QUERY_LENGTH = 200
@@ -373,7 +376,7 @@ def _error_chain(error: BaseException) -> list[BaseException]:
     return chain
 
 
-def _classify_download_error(error: DownloadError) -> AuraYouTubeExtractionError:
+def _classify_download_error(error: BaseException) -> AuraYouTubeExtractionError:
     diagnostic = str(error).lower()
     error_chain = _error_chain(error)
 
@@ -687,6 +690,43 @@ def _progress_payload(status: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _extract_info_with_access_retries(
+    url: str,
+    options: Mapping[str, Any],
+    *,
+    download: bool,
+    logger: AuraYtDlpLogger,
+    before_retry: Any = None,
+) -> Any:
+    operation = "M4A download" if download else "M4A metadata refresh"
+    for attempt in range(1, _MEDIA_ACCESS_ATTEMPTS + 1):
+        logger.debug(
+            f"Starting {operation} attempt={attempt}/{_MEDIA_ACCESS_ATTEMPTS}"
+        )
+        try:
+            # A new YoutubeDL instance forces a fresh extraction and therefore
+            # obtains fresh player/media URLs before every access-denied retry.
+            with YoutubeDL(dict(options)) as ydl:
+                return ydl.extract_info(url, download=download)
+        except (DownloadError, HTTPError) as error:
+            classified_error = _classify_download_error(error)
+            if (
+                classified_error.code != "MEDIA_ACCESS_DENIED"
+                or attempt >= _MEDIA_ACCESS_ATTEMPTS
+            ):
+                raise
+
+            logger.warning(
+                f"YouTube rejected {operation}; refreshing extraction before "
+                f"retry {attempt + 1}/{_MEDIA_ACCESS_ATTEMPTS}"
+            )
+            if callable(before_retry):
+                before_retry()
+            time.sleep(_MEDIA_ACCESS_RETRY_DELAY_SECONDS * attempt)
+
+    raise RuntimeError(f"{operation} retry loop ended unexpectedly")
+
+
 def download_youtube_m4a_json(
     raw_url: str,
     requested_format_id: str | None,
@@ -721,8 +761,12 @@ def download_youtube_m4a_json(
             "cachedir": False,
             "logger": logger,
         }
-        with YoutubeDL(metadata_options) as ydl:
-            extracted_info = ydl.extract_info(url, download=False)
+        extracted_info = _extract_info_with_access_retries(
+            url,
+            metadata_options,
+            download=False,
+            logger=logger,
+        )
 
         if not isinstance(extracted_info, Mapping):
             raise AuraYouTubeExtractionError(
@@ -808,10 +852,21 @@ def download_youtube_m4a_json(
             "logger": logger,
         }
         logger.debug(
-            f"Starting direct source M4A download with format={selected_format_id}"
+            f"Selected direct source M4A format={selected_format_id}"
         )
-        with YoutubeDL(download_options) as ydl:
-            ydl.extract_info(url, download=True)
+
+        def reset_failed_download() -> None:
+            _remove_incomplete_files(destination, video_id, logger)
+            if os.path.isfile(output_path) and not os.path.islink(output_path):
+                os.remove(output_path)
+
+        _extract_info_with_access_retries(
+            url,
+            download_options,
+            download=True,
+            logger=logger,
+            before_retry=reset_failed_download,
+        )
 
         if not os.path.isfile(output_path) or os.path.islink(output_path):
             raise AuraYouTubeExtractionError(
@@ -874,6 +929,10 @@ def download_youtube_m4a_json(
             )
         )
     except DownloadError as error:
+        classified_error = _classify_download_error(error)
+        logger.error(f"{classified_error.code}: {error}")
+        return _error_envelope(classified_error)
+    except HTTPError as error:
         classified_error = _classify_download_error(error)
         logger.error(f"{classified_error.code}: {error}")
         return _error_envelope(classified_error)
