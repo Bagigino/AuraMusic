@@ -161,6 +161,10 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
 
   const commitSource = useCallback(
     (nextSource: PlayerSource, autoPlay: boolean) => {
+      // Load the native item before publishing it to the UI. If the bridge
+      // rejects the source, activateItem can leave loading state and surface
+      // the error instead of exposing a source that will never become loaded.
+      player.replace(toExpoAudioSource(nextSource));
       sourceRef.current = nextSource;
       setSourceState(nextSource);
       setCurrentItem(
@@ -168,7 +172,6 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
           ? trackToQueueItem(nextSource.track)
           : nextSource.video,
       );
-      player.replace(toExpoAudioSource(nextSource));
       setResolving(false);
       setPlaybackError(null);
       didReachEffectiveEnd.current = false;
@@ -197,7 +200,6 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
       didReachEffectiveEnd.current = false;
       handledEndRequestId.current = null;
       player.pause();
-      player.replace(null);
 
       try {
         await ensureAudioMode();
@@ -566,8 +568,15 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
 
   const clearPlayback = useCallback(() => {
     requestId.current += 1;
-    player.pause();
-    player.replace(null);
+    try {
+      player.pause();
+      // expo-audio 57 types `null` as an AudioSource, but its iOS bridge
+      // exposes `replace` with a non-optional Swift AudioSource. An empty
+      // source removes the current AVPlayerItem without conversion failure.
+      player.replace({});
+    } catch (clearError) {
+      console.error('AuraMusic audio player cleanup failed', clearError);
+    }
     sourceRef.current = null;
     setQueue(null);
     setSourceState(null);

@@ -45,6 +45,13 @@ test('Mini Player alone opens Full Player and closing it does not clear playback
   assert.doesNotMatch(fullPlayer, /clearPlayback|resetPlayer/);
 });
 
+test('track activation never clears expo-audio with a null native source', async () => {
+  const playerContext = await source('../src/audio/audio-player-context.tsx');
+  assert.doesNotMatch(playerContext, /player\.replace\(null\)/);
+  assert.match(playerContext, /player\.replace\(toExpoAudioSource\(nextSource\)\)/);
+  assert.match(playerContext, /player\.replace\(\{\}\)/);
+});
+
 test('screen padding expands only while Mini Player is present', async () => {
   const { getScreenBottomPadding } = await import(
     '../src/components/player-layout-metrics.ts'
