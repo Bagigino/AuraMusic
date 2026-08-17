@@ -20,6 +20,7 @@ jobs:
       PYTHON_XCFRAMEWORK_PATH: modules/aura-native-test/ios/Python.xcframework
       YT_DLP_VERSION: '2026.07.04'
       YT_DLP_APPLE_PROVIDER_VERSION: '0.1.1'
+      CERTIFI_VERSION: '2026.7.22'
       YT_DLP_VENDOR_PATH: modules/aura-native-test/python-vendor
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
@@ -74,6 +75,24 @@ jobs:
           fi
 
           rm -rf "$YT_DLP_VENDOR_PATH/bin" "$YT_DLP_VENDOR_PATH/share"
+          YT_DLP_AND_PROVIDER_BYTES=$(du -sk "$YT_DLP_VENDOR_PATH" | awk '{ print $1 * 1024 }')
+
+          if ! python3 -m pip install \
+            --disable-pip-version-check \
+            --target "$YT_DLP_VENDOR_PATH" \
+            --no-compile \
+            --no-deps \
+            "certifi==$CERTIFI_VERSION"; then
+            echo "::error title=certifi vendoring failed::Could not install the pinned TLS CA package."
+            exit 1
+          fi
+
+          rm -rf "$YT_DLP_VENDOR_PATH/bin" "$YT_DLP_VENDOR_PATH/share"
+
+          test -f "$YT_DLP_VENDOR_PATH/certifi/cacert.pem" || {
+            echo "::error title=certifi CA bundle missing::certifi/cacert.pem was not vendored."
+            exit 1
+          }
 
           test -f "$YT_DLP_VENDOR_PATH/yt_dlp/__init__.py" || {
             echo "::error title=yt-dlp package missing::yt_dlp/__init__.py was not vendored."
@@ -97,9 +116,11 @@ jobs:
           done
 
           PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$YT_DLP_VENDOR_PATH" \
-            python3 - "$YT_DLP_VERSION" "$YT_DLP_APPLE_PROVIDER_VERSION" <<'PYTHON'
+            python3 - "$YT_DLP_VERSION" "$YT_DLP_APPLE_PROVIDER_VERSION" "$CERTIFI_VERSION" <<'PYTHON'
+          import certifi
           import importlib.metadata
           import importlib.util
+          from pathlib import Path
           import sys
           import yt_dlp
           import yt_dlp.extractor
@@ -110,6 +131,7 @@ jobs:
 
           expected_yt_dlp = sys.argv[1]
           expected_provider = sys.argv[2]
+          expected_certifi = sys.argv[3]
           if __version__ != expected_yt_dlp:
               raise SystemExit(
                   f"Vendored yt-dlp version mismatch: expected {expected_yt_dlp}, found {__version__}"
@@ -120,6 +142,14 @@ jobs:
               raise SystemExit(
                   f"Apple provider version mismatch: expected {expected_provider}, found {package_version}"
               )
+
+          certifi_version = importlib.metadata.version('certifi')
+          if certifi_version != expected_certifi:
+              raise SystemExit(
+                  f"certifi version mismatch: expected {expected_certifi}, found {certifi_version}"
+              )
+          if not Path(certifi.where()).is_file():
+              raise SystemExit(f'certifi CA bundle is missing: {certifi.where()}')
 
           namespace_spec = importlib.util.find_spec('yt_dlp_plugins')
           namespace_locations = list(namespace_spec.submodule_search_locations or []) if namespace_spec else []
@@ -159,14 +189,17 @@ jobs:
           fi
 
           VENDOR_BYTES=$(du -sk "$YT_DLP_VENDOR_PATH" | awk '{ print $1 * 1024 }')
-          APPLE_PROVIDER_BYTES=$((VENDOR_BYTES - YT_DLP_ONLY_BYTES))
+          APPLE_PROVIDER_BYTES=$((YT_DLP_AND_PROVIDER_BYTES - YT_DLP_ONLY_BYTES))
+          CERTIFI_BYTES=$((VENDOR_BYTES - YT_DLP_AND_PROVIDER_BYTES))
           {
             echo "### Vendored Python packages"
             echo "- yt-dlp version: $YT_DLP_VERSION"
             echo "- Apple WebKit provider version: $YT_DLP_APPLE_PROVIDER_VERSION"
+            echo "- certifi version: $CERTIFI_VERSION"
             echo "- Source directory: $YT_DLP_VENDOR_PATH"
             echo "- Uncompressed bytes: $VENDOR_BYTES"
             echo "- Approximate provider addition: $APPLE_PROVIDER_BYTES bytes"
+            echo "- Approximate certifi addition: $CERTIFI_BYTES bytes"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Initialize build paths
@@ -258,7 +291,7 @@ jobs:
             exit 1
           }
 
-          for required_module in _ctypes _socket _ssl select unicodedata; do
+          for required_module in _ctypes _socket _ssl select unicodedata zlib; do
             if ! find "$DYNLIB_DIRECTORY" -maxdepth 1 -type f -name "$required_module*.so" -print -quit | grep -q .; then
               echo "::error title=CPython extension missing::$required_module is required to import yt-dlp on iOS."
               exit 1
@@ -324,6 +357,11 @@ jobs:
             exit 1
           }
 
+          test -f modules/aura-native-test/python/aura_youtube_metadata.py || {
+            echo "::error title=YouTube metadata POC missing::aura_youtube_metadata.py was not found."
+            exit 1
+          }
+
 
           test -f "$YT_DLP_VENDOR_PATH/yt_dlp/version.py" || {
             echo "::error title=Vendored yt-dlp missing::yt_dlp/version.py was not found before Expo Prebuild."
@@ -332,6 +370,11 @@ jobs:
 
           test -f "$YT_DLP_VENDOR_PATH/yt_dlp_plugins/extractor/ytjsc.py" || {
             echo "::error title=Vendored Apple provider missing::yt_dlp_plugins/extractor/ytjsc.py was not found before Expo Prebuild."
+            exit 1
+          }
+
+          test -f "$YT_DLP_VENDOR_PATH/certifi/cacert.pem" || {
+            echo "::error title=Vendored certifi missing::certifi/cacert.pem was not found before Expo Prebuild."
             exit 1
           }
 
@@ -515,6 +558,11 @@ jobs:
             exit 1
           }
 
+          test -f "$APP_PATH/app/aura_youtube_metadata.py" || {
+            echo "::error title=YouTube metadata POC missing::aura_youtube_metadata.py was not found in the app bundle."
+            exit 1
+          }
+
 
           test -f "$APP_PATH/python-vendor/yt_dlp/__init__.py" || {
             echo "::error title=Vendored yt-dlp missing::yt_dlp/__init__.py was not found in the app bundle."
@@ -529,6 +577,22 @@ jobs:
 
           if ! grep -Fq "__version__ = '$YT_DLP_VERSION'" "$YT_DLP_BUNDLED_VERSION_FILE"; then
             echo "::error title=yt-dlp bundle version mismatch::The app bundle does not contain yt-dlp $YT_DLP_VERSION."
+            exit 1
+          fi
+
+          test -f "$APP_PATH/python-vendor/certifi/cacert.pem" || {
+            echo "::error title=certifi CA bundle missing::certifi/cacert.pem was not found in the app bundle."
+            exit 1
+          }
+
+          CERTIFI_METADATA=$(find "$APP_PATH/python-vendor" -maxdepth 1 \
+            -type d -name 'certifi-*.dist-info' -print -quit)
+          test -n "$CERTIFI_METADATA" || {
+            echo "::error title=certifi metadata missing::Package metadata was not found in the app bundle."
+            exit 1
+          }
+          if ! grep -Fxq "Version: $CERTIFI_VERSION" "$CERTIFI_METADATA/METADATA"; then
+            echo "::error title=certifi bundle version mismatch::The app bundle does not contain certifi $CERTIFI_VERSION."
             exit 1
           fi
 
@@ -560,7 +624,7 @@ jobs:
             exit 1
           fi
 
-          for required_module in _ctypes _socket _ssl select unicodedata; do
+          for required_module in _ctypes _socket _ssl select unicodedata zlib; do
             test -f "$APP_PATH/Frameworks/$required_module.framework/$required_module" || {
               echo "::error title=CPython runtime extension missing::$required_module.framework was not installed in the app bundle."
               exit 1
@@ -581,6 +645,7 @@ jobs:
           echo "- Apple WebKit provider version: $YT_DLP_APPLE_PROVIDER_VERSION" >> "$GITHUB_STEP_SUMMARY"
           echo "- Apple WebKit provider path: $APP_PATH/python-vendor/yt_dlp_plugins" >> "$GITHUB_STEP_SUMMARY"
           echo "- WebKit access: dynamic system-framework loading (no link-time dependency)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- certifi version: $CERTIFI_VERSION" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package unsigned IPA
         id: package

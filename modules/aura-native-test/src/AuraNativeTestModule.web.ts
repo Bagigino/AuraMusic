@@ -13,6 +13,9 @@ const webModule: AuraNativeTestModuleApi = {
   async testYtDlpAppleProvider() {
     return 'Apple WebKit provider unavailable on web';
   },
+  async extractYouTubeInfo() {
+    return 'YouTube native extraction unavailable on web';
+  },
 };
 
 export default webModule;

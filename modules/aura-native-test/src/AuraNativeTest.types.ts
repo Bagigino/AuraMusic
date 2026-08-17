@@ -9,9 +9,35 @@ export type YtDlpAppleProviderResult = {
   version: string;
 };
 
+export type YouTubeAudioFormat = {
+  formatId: string;
+  ext: string | null;
+  audioCodec: string | null;
+  bitrate: number | null;
+  fileSize: number | null;
+};
+
+export type YouTubeVideoInfo = {
+  id: string;
+  title: string;
+  uploader: string | null;
+  duration: number | null;
+  thumbnail: string | null;
+  webpageUrl: string;
+  audioFormats: YouTubeAudioFormat[];
+  hasM4aAudio: boolean;
+  preferredM4aFormatId: string | null;
+};
+
+export type YouTubeExtractionErrorPayload = {
+  code: string;
+  message: string;
+};
+
 export type AuraNativeTestModuleApi = {
   getNativeMessage(): Promise<string>;
   testPython(): Promise<number | string>;
   testYtDlpImport(): Promise<YtDlpImportResult | string>;
   testYtDlpAppleProvider(): Promise<YtDlpAppleProviderResult | string>;
+  extractYouTubeInfo(url: string): Promise<YouTubeVideoInfo | string>;
 };

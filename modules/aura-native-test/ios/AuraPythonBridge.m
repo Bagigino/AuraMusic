@@ -372,3 +372,97 @@ BOOL AuraTestYtDlpAppleProvider(
   }
   return YES;
 }
+
+NSString * _Nullable AuraExtractYouTubeInfo(
+  NSString *url,
+  NSString * _Nullable * _Nullable errorMessage
+) {
+  dispatch_once(&AuraPythonInitializationOnce, ^{
+    AuraInitializePython();
+  });
+
+  if (AuraPythonInitializationError != nil || !Py_IsInitialized()) {
+    AuraAssignError(errorMessage, AuraPythonInitializationError ?: @"CPython non è inizializzato.");
+    return nil;
+  }
+
+  PyGILState_STATE gilState = PyGILState_Ensure();
+  PyObject *module = PyImport_ImportModule("aura_youtube_metadata");
+  if (module == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Import del modulo metadata YouTube fallito: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  PyObject *function = PyObject_GetAttrString(module, "extract_youtube_info_json");
+  if (function == NULL || !PyCallable_Check(function)) {
+    NSString *detail = PyErr_Occurred()
+      ? AuraCurrentPythonException()
+      : @"extract_youtube_info_json non è callable.";
+    Py_XDECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, [NSString stringWithFormat:
+      @"Funzione metadata YouTube non valida: %@", detail]);
+    return nil;
+  }
+
+  const char *urlUtf8 = url.UTF8String;
+  Py_ssize_t urlLength = (Py_ssize_t)[url lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+  PyObject *pythonUrl = urlUtf8 != NULL
+    ? PyUnicode_DecodeUTF8(urlUtf8, urlLength, "strict")
+    : NULL;
+  if (pythonUrl == NULL) {
+    NSString *detail = PyErr_Occurred()
+      ? AuraCurrentPythonException()
+      : @"L'URL non è UTF-8 valido.";
+    Py_DECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, [NSString stringWithFormat:
+      @"Conversione URL YouTube fallita: %@", detail]);
+    return nil;
+  }
+
+  PyObject *pythonResult = PyObject_CallOneArg(function, pythonUrl);
+  Py_DECREF(pythonUrl);
+  Py_DECREF(function);
+  Py_DECREF(module);
+
+  if (pythonResult == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Estrazione metadata YouTube fallita: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  if (!PyUnicode_Check(pythonResult)) {
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, @"Il risultato metadata YouTube non è una stringa JSON.");
+    return nil;
+  }
+
+  const char *resultUtf8 = PyUnicode_AsUTF8(pythonResult);
+  if (resultUtf8 == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Lettura del JSON metadata YouTube fallita: %@", AuraCurrentPythonException()];
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  NSString *result = [NSString stringWithUTF8String:resultUtf8];
+  Py_DECREF(pythonResult);
+  PyGILState_Release(gilState);
+
+  if (result == nil) {
+    AuraAssignError(errorMessage, @"Il JSON metadata YouTube non è UTF-8 valido.");
+    return nil;
+  }
+  return result;
+}

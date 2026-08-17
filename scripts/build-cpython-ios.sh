@@ -160,7 +160,7 @@ cp -R "$DEVICE_INSTALL_DIRECTORY/lib" "$XCFRAMEWORK_SLICE/lib"
 DYNLIB_DIRECTORY="$XCFRAMEWORK_SLICE/lib/python3.14/lib-dynload"
 test -d "$DYNLIB_DIRECTORY"
 
-for required_module in _ctypes _socket _ssl select unicodedata; do
+for required_module in _ctypes _socket _ssl select unicodedata zlib; do
   if ! find "$DYNLIB_DIRECTORY" -maxdepth 1 -type f -name "$required_module*.so" -print -quit | grep -q .; then
     echo "Required CPython extension module was not built for iOS: $required_module" >&2
     exit 1

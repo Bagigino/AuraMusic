@@ -25,6 +25,11 @@ const unavailableModule: AuraNativeTestModuleApi = {
       'Il provider Apple WebKit non è incluso in questo client. Installa una development build iOS.',
     );
   },
+  async extractYouTubeInfo() {
+    throw new Error(
+      'L’estrazione YouTube nativa non è inclusa in questo client. Installa una development build iOS.',
+    );
+  },
 };
 
 export default nativeModule ?? unavailableModule;
