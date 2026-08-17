@@ -1,24 +1,35 @@
-import { useRef, useState } from 'react';
+import { useRouter } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { useAppAudioPlayer } from '@/audio/audio-player-context';
 import { AuraButton } from '@/components/aura-button';
 import { AuraColors } from '@/constants/aura-theme';
 import {
+  addDownloadProgressListener,
+  downloadYouTubeM4a,
   extractYouTubeInfo,
   getNativeMessage,
   testPython,
   testYtDlpAppleProvider,
   testYtDlpImport,
+  YouTubeDownloadError,
   YouTubeExtractionError,
+  type DownloadedAudioResult,
+  type DownloadProgress,
   type YouTubeAudioFormat,
   type YouTubeVideoInfo,
 } from '@/native/aura-native-test';
 
 function getErrorMessage(error: unknown) {
-  if (error instanceof YouTubeExtractionError) {
+  if (error instanceof YouTubeExtractionError || error instanceof YouTubeDownloadError) {
     return `[${error.code}] ${error.message}`;
   }
   return error instanceof Error ? error.message : 'Errore sconosciuto durante il test nativo.';
+}
+
+function formatFileSize(fileSize: number | null) {
+  return fileSize === null ? 'n/d' : `${(fileSize / 1_048_576).toFixed(2)} MB`;
 }
 
 function formatAudioFormat(format: YouTubeAudioFormat) {
@@ -29,6 +40,8 @@ function formatAudioFormat(format: YouTubeAudioFormat) {
 }
 
 export function NativeModuleDebugCard() {
+  const router = useRouter();
+  const { playTrack } = useAppAudioPlayer();
   const [message, setMessage] = useState<string | null>(null);
   const [pythonMessage, setPythonMessage] = useState<string | null>(null);
   const [ytDlpMessage, setYtDlpMessage] = useState<string | null>(null);
@@ -36,11 +49,34 @@ export function NativeModuleDebugCard() {
   const [youtubeUrl, setYouTubeUrl] = useState('');
   const [youtubeInfo, setYouTubeInfo] = useState<YouTubeVideoInfo | null>(null);
   const [youtubeMessage, setYouTubeMessage] = useState<string | null>(null);
+  const [downloadedAudio, setDownloadedAudio] = useState<DownloadedAudioResult | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+  const [downloadStatus, setDownloadStatus] = useState<
+    'idle' | 'preparing' | 'downloading' | 'completed'
+  >('idle');
   const [error, setError] = useState<string | null>(null);
   const youtubeRequestInFlight = useRef(false);
+  const downloadRequestInFlight = useRef(false);
   const [activeTest, setActiveTest] = useState<
-    'native' | 'python' | 'yt-dlp' | 'apple-provider' | 'youtube-metadata' | null
+    | 'native'
+    | 'python'
+    | 'yt-dlp'
+    | 'apple-provider'
+    | 'youtube-metadata'
+    | 'youtube-download'
+    | null
   >(null);
+
+  useEffect(() => {
+    const subscription = addDownloadProgressListener((progress) => {
+      if (!downloadRequestInFlight.current) {
+        return;
+      }
+      setDownloadProgress(progress);
+      setDownloadStatus('downloading');
+    });
+    return () => subscription.remove();
+  }, []);
 
   const handleTest = async () => {
     setActiveTest('native');
@@ -135,6 +171,82 @@ export function NativeModuleDebugCard() {
     }
   };
 
+  const handleYouTubeDownload = async () => {
+    if (downloadRequestInFlight.current) {
+      return;
+    }
+
+    downloadRequestInFlight.current = true;
+    setActiveTest('youtube-download');
+    setDownloadedAudio(null);
+    setDownloadProgress(null);
+    setDownloadStatus('preparing');
+    setYouTubeMessage(null);
+    setError(null);
+
+    try {
+      const result = await downloadYouTubeM4a(
+        youtubeUrl.trim(),
+        youtubeInfo?.preferredM4aFormatId ?? undefined,
+      );
+      if (typeof result === 'string') {
+        setYouTubeMessage(result);
+        setDownloadStatus('idle');
+      } else {
+        setDownloadedAudio(result);
+        setDownloadStatus('completed');
+      }
+    } catch (downloadError) {
+      setDownloadStatus('idle');
+      setError(getErrorMessage(downloadError));
+    } finally {
+      downloadRequestInFlight.current = false;
+      setActiveTest(null);
+    }
+  };
+
+  const handlePlayDownloadedAudio = () => {
+    if (!downloadedAudio) {
+      return;
+    }
+
+    try {
+      playTrack({
+        id: `youtube-debug-${downloadedAudio.videoId}`,
+        title: downloadedAudio.title,
+        artist: youtubeInfo?.uploader ?? 'YouTube Debug',
+        thumbnail: youtubeInfo?.thumbnail ?? '',
+        duration: youtubeInfo?.duration ?? 0,
+        sourceUrl: youtubeUrl.trim(),
+        localUri: downloadedAudio.localUri,
+        downloadedAt: new Date().toISOString(),
+      });
+      router.push('/player');
+    } catch (playbackError) {
+      setError(getErrorMessage(playbackError));
+    }
+  };
+
+  const handleYouTubeUrlChange = (value: string) => {
+    setYouTubeUrl(value);
+    setYouTubeInfo(null);
+    setYouTubeMessage(null);
+    setDownloadedAudio(null);
+    setDownloadProgress(null);
+    setDownloadStatus('idle');
+  };
+
+  const progressLabel =
+    downloadStatus === 'preparing'
+      ? 'Preparing'
+      : downloadStatus === 'downloading'
+        ? downloadProgress?.progress === null || downloadProgress?.progress === undefined
+          ? 'Downloading'
+          : `Downloading ${Math.round(downloadProgress.progress * 100)}%`
+        : downloadStatus === 'completed'
+          ? 'Completed'
+          : null;
+
   return (
     <View style={styles.card}>
       <Text style={styles.eyebrow}>DEBUG · EXPO MODULES API</Text>
@@ -180,7 +292,7 @@ export function NativeModuleDebugCard() {
           autoCorrect={false}
           editable={activeTest === null}
           keyboardType="url"
-          onChangeText={setYouTubeUrl}
+          onChangeText={handleYouTubeUrlChange}
           placeholder="https://www.youtube.com/watch?v=..."
           placeholderTextColor={AuraColors.textMuted}
           style={styles.urlInput}
@@ -193,6 +305,14 @@ export function NativeModuleDebugCard() {
           onPress={() => void handleYouTubeMetadata()}
           variant="secondary"
         />
+        <AuraButton
+          label="Download M4A"
+          disabled={activeTest !== null || youtubeUrl.trim().length === 0}
+          loading={activeTest === 'youtube-download'}
+          onPress={() => void handleYouTubeDownload()}
+          variant="secondary"
+        />
+        {progressLabel && <Text style={styles.downloadStatus}>{progressLabel}</Text>}
       </View>
 
       {message && <Text style={styles.success}>{message}</Text>}
@@ -225,6 +345,28 @@ export function NativeModuleDebugCard() {
               {formatAudioFormat(format)}
             </Text>
           ))}
+        </View>
+      )}
+      {downloadedAudio && (
+        <View style={styles.metadataResult}>
+          <Text style={styles.metadataLine}>
+            File: {downloadedAudio.videoId}.m4a
+          </Text>
+          <Text style={styles.metadataLine}>Format ID: {downloadedAudio.formatId}</Text>
+          <Text style={styles.metadataLine}>
+            Size: {formatFileSize(downloadedAudio.fileSize)}
+          </Text>
+          <Text selectable style={styles.uriLine}>
+            localUri: {downloadedAudio.localUri}
+          </Text>
+          {downloadedAudio.alreadyExists && (
+            <Text style={styles.success}>File gia presente: nessun nuovo download.</Text>
+          )}
+          <AuraButton
+            label="Play downloaded M4A"
+            disabled={activeTest !== null}
+            onPress={handlePlayDownloadedAudio}
+          />
         </View>
       )}
       {error && <Text style={styles.error}>{error}</Text>}
@@ -301,6 +443,17 @@ const styles = StyleSheet.create({
     color: AuraColors.success,
     fontSize: 13,
     lineHeight: 19,
+  },
+  downloadStatus: {
+    color: AuraColors.accent,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  uriLine: {
+    color: AuraColors.textMuted,
+    fontSize: 11,
+    lineHeight: 17,
   },
   error: {
     color: AuraColors.danger,

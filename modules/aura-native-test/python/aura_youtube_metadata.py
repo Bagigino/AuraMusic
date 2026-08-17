@@ -1,9 +1,11 @@
-"""Metadata-only YouTube extraction for AuraMusic's embedded CPython POC."""
+"""YouTube metadata and direct-source M4A POCs for AuraMusic's embedded CPython."""
 
 from __future__ import annotations
 
+import errno
 import json
 import math
+import os
 import re
 import socket
 import sys
@@ -22,7 +24,12 @@ from yt_dlp.networking.exceptions import (
     RequestError,
     TransportError,
 )
-from yt_dlp.utils import DownloadError, GeoRestrictedError, UnsupportedError
+from yt_dlp.utils import (
+    DownloadCancelled,
+    DownloadError,
+    GeoRestrictedError,
+    UnsupportedError,
+)
 
 
 _ALLOWED_HOSTS = frozenset(
@@ -30,6 +37,7 @@ _ALLOWED_HOSTS = frozenset(
 )
 _NETWORK_TIMEOUT_SECONDS = 25
 _MAX_DIAGNOSTIC_LOG_ENTRIES = 200
+_VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _URL_PATTERN = re.compile(r"https?://[^\s\]\[<>()\"']+", re.IGNORECASE)
 _SENSITIVE_PATTERN = re.compile(
     r"(?im)\b(authorization|cookie|set-cookie|x-goog-visitor-id|signature|sig|token)"
@@ -146,6 +154,67 @@ def _audio_format(format_info: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _is_source_m4a_format(format_info: Mapping[str, Any]) -> bool:
+    audio_codec = _nullable_string(format_info.get("acodec"))
+    extension = _nullable_string(format_info.get("ext"))
+    return (
+        _nullable_string(format_info.get("format_id")) is not None
+        and format_info.get("vcodec") == "none"
+        and audio_codec not in (None, "none")
+        and extension is not None
+        and extension.lower() == "m4a"
+    )
+
+
+def _select_m4a_format(
+    info: Mapping[str, Any], requested_format_id: str | None
+) -> Mapping[str, Any]:
+    m4a_formats = [
+        item
+        for item in info.get("formats") or []
+        if isinstance(item, Mapping) and _is_source_m4a_format(item)
+    ]
+    if not m4a_formats:
+        raise AuraYouTubeExtractionError(
+            "NO_M4A_FORMAT",
+            "Il video non espone un formato M4A audio-only scaricabile direttamente.",
+        )
+
+    if requested_format_id is not None:
+        normalized_format_id = requested_format_id.strip()
+        if not normalized_format_id:
+            raise AuraYouTubeExtractionError(
+                "INVALID_FORMAT_ID", "Il format ID M4A non e valido."
+            )
+        selected = next(
+            (
+                item
+                for item in m4a_formats
+                if _nullable_string(item.get("format_id")) == normalized_format_id
+            ),
+            None,
+        )
+        if selected is None:
+            raise AuraYouTubeExtractionError(
+                "INVALID_FORMAT_ID",
+                "Il format ID richiesto non e un formato M4A audio-only valido per questo video.",
+            )
+        return selected
+
+    return max(
+        m4a_formats,
+        key=lambda item: (
+            _nullable_number(item.get("abr"))
+            if _nullable_number(item.get("abr")) is not None
+            else -1,
+            _nullable_number(item.get("filesize"))
+            or _nullable_number(item.get("filesize_approx"))
+            or -1,
+            _nullable_string(item.get("format_id")) or "",
+        ),
+    )
+
+
 def _build_dto(info: Mapping[str, Any]) -> dict[str, Any]:
     audio_formats = [
         audio_format
@@ -217,6 +286,18 @@ def _classify_download_error(error: DownloadError) -> AuraYouTubeExtractionError
     diagnostic = str(error).lower()
     error_chain = _error_chain(error)
 
+    for item in error_chain:
+        if isinstance(item, OSError):
+            if item.errno == errno.ENOSPC:
+                return AuraYouTubeExtractionError(
+                    "DISK_FULL", "Spazio insufficiente per completare il download."
+                )
+            if item.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
+                return AuraYouTubeExtractionError(
+                    "FILESYSTEM_ERROR",
+                    "AuraMusic non puo scrivere il file nella directory Documents.",
+                )
+
     if any(isinstance(item, (socket.timeout, TimeoutError)) for item in error_chain) or any(
         term in diagnostic for term in ("timed out", "timeout")
     ):
@@ -281,6 +362,341 @@ def _error_envelope(error: AuraYouTubeExtractionError) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+def _success_envelope(data: Mapping[str, Any]) -> str:
+    return json.dumps(
+        {"ok": True, "data": data},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _validate_destination_directory(raw_path: str) -> str:
+    if not isinstance(raw_path, str) or not raw_path:
+        raise AuraYouTubeExtractionError(
+            "FILESYSTEM_ERROR", "La directory di destinazione iOS non e valida."
+        )
+    destination = os.path.realpath(raw_path)
+    if not os.path.isabs(destination) or not os.path.isdir(destination):
+        raise AuraYouTubeExtractionError(
+            "FILESYSTEM_ERROR", "La directory di destinazione iOS non e disponibile."
+        )
+    return destination
+
+
+def _safe_output_path(destination: str, video_id: str) -> str:
+    if not _VIDEO_ID_PATTERN.fullmatch(video_id):
+        raise AuraYouTubeExtractionError(
+            "INVALID_METADATA", "yt-dlp ha restituito un video ID non sicuro."
+        )
+    output_path = os.path.realpath(os.path.join(destination, f"{video_id}.m4a"))
+    if os.path.commonpath((destination, output_path)) != destination:
+        raise AuraYouTubeExtractionError(
+            "FILESYSTEM_ERROR", "Il percorso M4A calcolato non e sicuro."
+        )
+    return output_path
+
+
+def _remove_incomplete_files(destination: str, video_id: str, logger: AuraYtDlpLogger) -> None:
+    prefixes = (f"{video_id}.m4a.part", f"{video_id}.m4a.ytdl")
+    try:
+        names = os.listdir(destination)
+    except OSError as error:
+        logger.warning(f"Unable to inspect partial files: {type(error).__name__}")
+        return
+
+    for name in names:
+        if not name.startswith(prefixes):
+            continue
+        candidate = os.path.realpath(os.path.join(destination, name))
+        if os.path.commonpath((destination, candidate)) != destination:
+            continue
+        try:
+            if os.path.isfile(candidate) and not os.path.islink(candidate):
+                os.remove(candidate)
+                logger.debug(f"Removed incomplete file: {name}")
+        except OSError as error:
+            logger.warning(
+                f"Unable to remove incomplete file {name}: {type(error).__name__}"
+            )
+
+
+def _progress_payload(status: Mapping[str, Any]) -> dict[str, Any] | None:
+    progress_status = status.get("status")
+    if progress_status not in ("downloading", "finished"):
+        return None
+
+    downloaded_bytes = _nullable_number(status.get("downloaded_bytes"))
+    total_bytes = _nullable_number(status.get("total_bytes"))
+    total_bytes_estimate = _nullable_number(status.get("total_bytes_estimate"))
+    total = total_bytes if total_bytes is not None else total_bytes_estimate
+    progress: float | None = None
+    if progress_status == "finished":
+        progress = 1.0
+    elif (
+        downloaded_bytes is not None
+        and total is not None
+        and total > 0
+    ):
+        progress = min(1.0, max(0.0, float(downloaded_bytes) / float(total)))
+
+    return {
+        "status": progress_status,
+        "downloadedBytes": downloaded_bytes,
+        "totalBytes": total_bytes,
+        "totalBytesEstimate": total_bytes_estimate,
+        "speed": _nullable_number(status.get("speed")),
+        "eta": _nullable_number(status.get("eta")),
+        "progress": progress,
+    }
+
+
+def download_youtube_m4a_json(
+    raw_url: str,
+    requested_format_id: str | None,
+    destination_directory: str,
+    progress_callback: Any = None,
+) -> str:
+    """Download one source M4A and return AuraMusic's stable JSON envelope."""
+    logger = AuraYtDlpLogger()
+    output_path: str | None = None
+    video_id: str | None = None
+    download_succeeded = False
+
+    try:
+        url = _validate_url(raw_url)
+        destination = _validate_destination_directory(destination_directory)
+        provider = test_apple_webkit_provider()
+        logger.debug(
+            "Apple WebKit JS Challenge Provider ready for download: "
+            f"{provider['provider']} {provider['version']}"
+        )
+
+        metadata_options = {
+            "quiet": True,
+            "verbose": True,
+            "skip_download": True,
+            "simulate": True,
+            "noplaylist": True,
+            "socket_timeout": _NETWORK_TIMEOUT_SECONDS,
+            "retries": 1,
+            "extractor_retries": 1,
+            "fragment_retries": 0,
+            "cachedir": False,
+            "logger": logger,
+        }
+        with YoutubeDL(metadata_options) as ydl:
+            extracted_info = ydl.extract_info(url, download=False)
+
+        if not isinstance(extracted_info, Mapping):
+            raise AuraYouTubeExtractionError(
+                "INVALID_METADATA", "yt-dlp non ha restituito un video valido."
+            )
+
+        video_id = _nullable_string(extracted_info.get("id"))
+        title = _nullable_string(extracted_info.get("title"))
+        if video_id is None or title is None:
+            raise AuraYouTubeExtractionError(
+                "INVALID_METADATA", "yt-dlp non ha restituito i metadata richiesti."
+            )
+
+        selected_format = _select_m4a_format(extracted_info, requested_format_id)
+        selected_format_id = _nullable_string(selected_format.get("format_id"))
+        if selected_format_id is None:
+            raise AuraYouTubeExtractionError(
+                "INVALID_FORMAT_ID", "Il formato M4A selezionato non ha un format ID."
+            )
+
+        output_path = _safe_output_path(destination, video_id)
+        if os.path.lexists(output_path):
+            if os.path.islink(output_path) or not os.path.isfile(output_path):
+                raise AuraYouTubeExtractionError(
+                    "FILESYSTEM_ERROR", "Il percorso M4A esistente non e un file regolare."
+                )
+            existing_size = os.path.getsize(output_path)
+            if existing_size > 0:
+                download_succeeded = True
+                _remove_incomplete_files(destination, video_id, logger)
+                return _success_envelope(
+                    {
+                        "success": True,
+                        "alreadyExists": True,
+                        "videoId": video_id,
+                        "title": title,
+                        "formatId": selected_format_id,
+                        "ext": "m4a",
+                        "localPath": output_path,
+                        "fileSize": existing_size,
+                    }
+                )
+            os.remove(output_path)
+
+        _remove_incomplete_files(destination, video_id, logger)
+
+        def progress_hook(status: Mapping[str, Any]) -> None:
+            payload = _progress_payload(status)
+            if payload is None or not callable(progress_callback):
+                return
+            try:
+                progress_callback(
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                )
+            except Exception as error:
+                logger.warning(
+                    f"Progress event delivery failed: {type(error).__name__}"
+                )
+
+        download_options = {
+            "format": selected_format_id,
+            "noplaylist": True,
+            "paths": {"home": destination},
+            "outtmpl": {"default": "%(id)s.%(ext)s"},
+            "quiet": True,
+            "verbose": True,
+            "socket_timeout": _NETWORK_TIMEOUT_SECONDS,
+            "retries": 1,
+            "extractor_retries": 1,
+            "fragment_retries": 1,
+            "cachedir": False,
+            "continuedl": False,
+            "overwrites": False,
+            "nopart": False,
+            "fixup": "never",
+            "writeinfojson": False,
+            "writethumbnail": False,
+            "writesubtitles": False,
+            "writeautomaticsub": False,
+            "getcomments": False,
+            "progress_hooks": [progress_hook],
+            "logger": logger,
+        }
+        logger.debug(
+            f"Starting direct source M4A download with format={selected_format_id}"
+        )
+        with YoutubeDL(download_options) as ydl:
+            ydl.extract_info(url, download=True)
+
+        if not os.path.isfile(output_path) or os.path.islink(output_path):
+            raise AuraYouTubeExtractionError(
+                "FILESYSTEM_ERROR", "Il download non ha prodotto il file M4A previsto."
+            )
+        file_size = os.path.getsize(output_path)
+        if file_size <= 0:
+            raise AuraYouTubeExtractionError(
+                "FILESYSTEM_ERROR", "Il file M4A scaricato e vuoto."
+            )
+
+        download_succeeded = True
+        _remove_incomplete_files(destination, video_id, logger)
+        logger.debug(
+            f"Direct M4A download completed: id={video_id} format={selected_format_id}"
+        )
+        return _success_envelope(
+            {
+                "success": True,
+                "alreadyExists": False,
+                "videoId": video_id,
+                "title": title,
+                "formatId": selected_format_id,
+                "ext": "m4a",
+                "localPath": output_path,
+                "fileSize": file_size,
+            }
+        )
+    except AuraYouTubeExtractionError as error:
+        logger.error(f"{error.code}: {error.message}")
+        return _error_envelope(error)
+    except AuraYtDlpAppleProviderError as error:
+        logger.error(f"APPLE_PROVIDER_UNAVAILABLE: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "APPLE_PROVIDER_UNAVAILABLE",
+                "Il provider Apple WebKit non e disponibile nel runtime iOS.",
+            )
+        )
+    except GeoRestrictedError as error:
+        logger.error(f"RESTRICTED_VIDEO: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "RESTRICTED_VIDEO",
+                "Il video non e disponibile in questa area geografica.",
+            )
+        )
+    except UnsupportedError as error:
+        logger.error(f"UNSUPPORTED_URL: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "UNSUPPORTED_URL", "yt-dlp non riconosce questo URL YouTube."
+            )
+        )
+    except DownloadCancelled as error:
+        logger.error(f"DOWNLOAD_INTERRUPTED: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "DOWNLOAD_INTERRUPTED", "Il download M4A e stato interrotto."
+            )
+        )
+    except DownloadError as error:
+        classified_error = _classify_download_error(error)
+        logger.error(f"{classified_error.code}: {error}")
+        return _error_envelope(classified_error)
+    except (socket.timeout, TimeoutError) as error:
+        logger.error(f"NETWORK_TIMEOUT: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "NETWORK_TIMEOUT", "Il download da YouTube ha superato il timeout."
+            )
+        )
+    except CertificateVerifyError as error:
+        logger.error(f"TLS_ERROR: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "TLS_ERROR",
+                "La connessione HTTPS a YouTube non ha superato la verifica TLS.",
+            )
+        )
+    except (TransportError, RequestError) as error:
+        logger.error(f"NETWORK_ERROR: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "NETWORK_ERROR", "Impossibile contattare YouTube. Controlla la connessione."
+            )
+        )
+    except KeyboardInterrupt as error:
+        logger.error(f"DOWNLOAD_INTERRUPTED: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "DOWNLOAD_INTERRUPTED", "Il download M4A e stato interrotto."
+            )
+        )
+    except OSError as error:
+        code = "DISK_FULL" if error.errno == errno.ENOSPC else "FILESYSTEM_ERROR"
+        message = (
+            "Spazio insufficiente per completare il download."
+            if code == "DISK_FULL"
+            else "Errore filesystem durante il download M4A."
+        )
+        logger.error(f"{code}: {type(error).__name__}: {error}")
+        return _error_envelope(AuraYouTubeExtractionError(code, message))
+    except BaseException as error:
+        logger.error(f"PYTHON_ERROR: {type(error).__name__}: {error}")
+        print(
+            "AuraMusic YouTube M4A download traceback:\n"
+            + _redact_log_message(traceback.format_exc()),
+            file=sys.stderr,
+            flush=True,
+        )
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "PYTHON_ERROR", "Errore Python inatteso durante il download M4A."
+            )
+        )
+    finally:
+        if not download_succeeded and output_path is not None and video_id is not None:
+            _remove_incomplete_files(
+                os.path.dirname(output_path), video_id, logger
+            )
 
 
 def extract_youtube_info_json(raw_url: str) -> str:

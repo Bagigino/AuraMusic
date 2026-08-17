@@ -362,6 +362,18 @@ jobs:
             exit 1
           }
 
+          grep -Fq 'def download_youtube_m4a_json' \
+            modules/aura-native-test/python/aura_youtube_metadata.py || {
+            echo "::error title=YouTube M4A POC missing::The embedded Python download entry point was not found."
+            exit 1
+          }
+
+          grep -Fq 'AsyncFunction("downloadYouTubeM4a")' \
+            modules/aura-native-test/ios/AuraNativeTestModule.swift || {
+            echo "::error title=YouTube M4A native API missing::downloadYouTubeM4a was not found in AuraNativeTestModule."
+            exit 1
+          }
+
 
           test -f "$YT_DLP_VENDOR_PATH/yt_dlp/version.py" || {
             echo "::error title=Vendored yt-dlp missing::yt_dlp/version.py was not found before Expo Prebuild."
@@ -560,6 +572,12 @@ jobs:
 
           test -f "$APP_PATH/app/aura_youtube_metadata.py" || {
             echo "::error title=YouTube metadata POC missing::aura_youtube_metadata.py was not found in the app bundle."
+            exit 1
+          }
+
+          grep -Fq 'def download_youtube_m4a_json' \
+            "$APP_PATH/app/aura_youtube_metadata.py" || {
+            echo "::error title=YouTube M4A POC missing::The Python download entry point is missing from the app bundle."
             exit 1
           }
 

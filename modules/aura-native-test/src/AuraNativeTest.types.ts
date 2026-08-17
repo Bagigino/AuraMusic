@@ -1,3 +1,5 @@
+import type { EventSubscription } from 'expo-modules-core';
+
 export type YtDlpImportResult = {
   success: boolean;
   version: string;
@@ -34,10 +36,40 @@ export type YouTubeExtractionErrorPayload = {
   message: string;
 };
 
+export type DownloadProgress = {
+  status: 'downloading' | 'finished';
+  downloadedBytes: number | null;
+  totalBytes: number | null;
+  totalBytesEstimate: number | null;
+  speed: number | null;
+  eta: number | null;
+  progress: number | null;
+};
+
+export type DownloadedAudioResult = {
+  success: true;
+  alreadyExists: boolean;
+  videoId: string;
+  title: string;
+  formatId: string;
+  ext: 'm4a';
+  localPath: string;
+  localUri: string;
+  fileSize: number | null;
+};
+
 export type AuraNativeTestModuleApi = {
   getNativeMessage(): Promise<string>;
   testPython(): Promise<number | string>;
   testYtDlpImport(): Promise<YtDlpImportResult | string>;
   testYtDlpAppleProvider(): Promise<YtDlpAppleProviderResult | string>;
   extractYouTubeInfo(url: string): Promise<YouTubeVideoInfo | string>;
+  downloadYouTubeM4a(
+    url: string,
+    formatId?: string,
+  ): Promise<DownloadedAudioResult | string>;
+  addListener(
+    eventName: 'onDownloadProgress',
+    listener: (event: DownloadProgress) => void,
+  ): EventSubscription;
 };

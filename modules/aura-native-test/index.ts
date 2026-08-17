@@ -1,5 +1,7 @@
 import AuraNativeTestModule from './src/AuraNativeTestModule';
 import type {
+  DownloadedAudioResult,
+  DownloadProgress,
   YouTubeExtractionErrorPayload,
   YouTubeVideoInfo,
   YtDlpAppleProviderResult,
@@ -7,6 +9,8 @@ import type {
 } from './src/AuraNativeTest.types';
 
 export type {
+  DownloadedAudioResult,
+  DownloadProgress,
   YouTubeAudioFormat,
   YouTubeExtractionErrorPayload,
   YouTubeVideoInfo,
@@ -24,6 +28,16 @@ export class YouTubeExtractionError extends Error {
   }
 }
 
+export class YouTubeDownloadError extends Error {
+  readonly code: string;
+
+  constructor({ code, message }: YouTubeExtractionErrorPayload) {
+    super(message);
+    this.name = 'YouTubeDownloadError';
+    this.code = code;
+  }
+}
+
 function toExtractionError(error: unknown): YouTubeExtractionError {
   const nativeError = error as { code?: unknown; message?: unknown };
   return new YouTubeExtractionError({
@@ -32,6 +46,17 @@ function toExtractionError(error: unknown): YouTubeExtractionError {
       typeof nativeError?.message === 'string'
         ? nativeError.message
         : 'Errore sconosciuto durante l’estrazione dei metadata YouTube.',
+  });
+}
+
+function toDownloadError(error: unknown): YouTubeDownloadError {
+  const nativeError = error as { code?: unknown; message?: unknown };
+  return new YouTubeDownloadError({
+    code: typeof nativeError?.code === 'string' ? nativeError.code : 'NATIVE_ERROR',
+    message:
+      typeof nativeError?.message === 'string'
+        ? nativeError.message
+        : 'Errore sconosciuto durante il download M4A.',
   });
 }
 
@@ -57,4 +82,19 @@ export async function extractYouTubeInfo(url: string): Promise<YouTubeVideoInfo 
   } catch (error) {
     throw toExtractionError(error);
   }
+}
+
+export async function downloadYouTubeM4a(
+  url: string,
+  formatId?: string,
+): Promise<DownloadedAudioResult | string> {
+  try {
+    return await AuraNativeTestModule.downloadYouTubeM4a(url, formatId);
+  } catch (error) {
+    throw toDownloadError(error);
+  }
+}
+
+export function addDownloadProgressListener(listener: (event: DownloadProgress) => void) {
+  return AuraNativeTestModule.addListener('onDownloadProgress', listener);
 }

@@ -16,6 +16,12 @@ const webModule: AuraNativeTestModuleApi = {
   async extractYouTubeInfo() {
     return 'YouTube native extraction unavailable on web';
   },
+  async downloadYouTubeM4a() {
+    return 'Native M4A download unavailable on web';
+  },
+  addListener() {
+    return { remove() {} };
+  },
 };
 
 export default webModule;

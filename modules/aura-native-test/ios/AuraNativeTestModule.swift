@@ -51,6 +51,33 @@ private struct AuraYouTubeEnvelope: Decodable {
   let error: AuraYouTubeErrorPayload?
 }
 
+private struct AuraDownloadedAudioPayload: Decodable {
+  let success: Bool
+  let alreadyExists: Bool?
+  let videoId: String
+  let title: String
+  let formatId: String
+  let ext: String
+  let localPath: String
+  let fileSize: Double?
+}
+
+private struct AuraDownloadEnvelope: Decodable {
+  let ok: Bool
+  let data: AuraDownloadedAudioPayload?
+  let error: AuraYouTubeErrorPayload?
+}
+
+private struct AuraDownloadProgressPayload: Decodable {
+  let status: String
+  let downloadedBytes: Double?
+  let totalBytes: Double?
+  let totalBytesEstimate: Double?
+  let speed: Double?
+  let eta: Double?
+  let progress: Double?
+}
+
 private struct AuraYouTubeAudioFormatResult: Record {
   @Field var formatId: String = ""
   @Field var ext: String?
@@ -69,6 +96,18 @@ private struct AuraYouTubeVideoInfoResult: Record {
   @Field var audioFormats: [AuraYouTubeAudioFormatResult] = []
   @Field var hasM4aAudio: Bool = false
   @Field var preferredM4aFormatId: String?
+}
+
+private struct AuraDownloadedAudioResult: Record {
+  @Field var success: Bool = true
+  @Field var alreadyExists: Bool = false
+  @Field var videoId: String = ""
+  @Field var title: String = ""
+  @Field var formatId: String = ""
+  @Field var ext: String = "m4a"
+  @Field var localPath: String = ""
+  @Field var localUri: String = ""
+  @Field var fileSize: Double?
 }
 
 private func makeAudioFormatResult(
@@ -100,8 +139,28 @@ private func makeVideoInfoResult(
 }
 
 public class AuraNativeTestModule: Module {
+  private let downloadStateLock = NSLock()
+  private var downloadIsActive = false
+
+  private func beginDownload() -> Bool {
+    downloadStateLock.lock()
+    defer { downloadStateLock.unlock() }
+    guard !downloadIsActive else {
+      return false
+    }
+    downloadIsActive = true
+    return true
+  }
+
+  private func finishDownload() {
+    downloadStateLock.lock()
+    downloadIsActive = false
+    downloadStateLock.unlock()
+  }
+
   public func definition() -> ModuleDefinition {
     Name("AuraNativeTest")
+    Events("onDownloadProgress")
 
     AsyncFunction("getNativeMessage") {
       return "Hello from native iOS"
@@ -193,6 +252,159 @@ public class AuraNativeTestModule: Module {
           ?? "Estrazione metadata YouTube fallita senza dettagli.",
         code: extractionError?.code ?? "EXTRACTION_ERROR"
       )
+    }
+
+    AsyncFunction("downloadYouTubeM4a") {
+      (url: String, formatId: String?) throws -> AuraDownloadedAudioResult in
+      guard self.beginDownload() else {
+        throw Exception(
+          name: "DOWNLOAD_IN_PROGRESS",
+          description: "Un download M4A e gia in corso.",
+          code: "DOWNLOAD_IN_PROGRESS"
+        )
+      }
+      defer { self.finishDownload() }
+
+      let fileManager = FileManager.default
+      guard let documentsDirectory = fileManager.urls(
+        for: .documentDirectory,
+        in: .userDomainMask
+      ).first else {
+        throw Exception(
+          name: "FILESYSTEM_ERROR",
+          description: "La directory Documents dell'app non e disponibile.",
+          code: "FILESYSTEM_ERROR"
+        )
+      }
+
+      let downloadDirectory = documentsDirectory.appendingPathComponent(
+        "music-downloads",
+        isDirectory: true
+      )
+      do {
+        try fileManager.createDirectory(
+          at: downloadDirectory,
+          withIntermediateDirectories: true,
+          attributes: nil
+        )
+      } catch {
+        let nsError = error as NSError
+        let code = nsError.code == NSFileWriteOutOfSpaceError
+          ? "DISK_FULL"
+          : "FILESYSTEM_ERROR"
+        throw Exception(
+          name: code,
+          description: code == "DISK_FULL"
+            ? "Spazio insufficiente per creare la directory di download."
+            : "Impossibile creare Documents/music-downloads.",
+          code: code
+        )
+      }
+
+      let progressHandler: AuraDownloadProgressHandler = { [weak self] progressJSON in
+        guard let payload = try? JSONDecoder().decode(
+          AuraDownloadProgressPayload.self,
+          from: Data((progressJSON as String).utf8)
+        ) else {
+          return
+        }
+        self?.sendEvent("onDownloadProgress", [
+          "status": payload.status,
+          "downloadedBytes": payload.downloadedBytes,
+          "totalBytes": payload.totalBytes,
+          "totalBytesEstimate": payload.totalBytesEstimate,
+          "speed": payload.speed,
+          "eta": payload.eta,
+          "progress": payload.progress,
+        ])
+      }
+
+      var pythonError: NSString?
+      guard let json = AuraDownloadYouTubeM4a(
+        url,
+        formatId,
+        downloadDirectory.path,
+        progressHandler,
+        &pythonError
+      ) else {
+        throw Exception(
+          name: "NATIVE_BRIDGE_ERROR",
+          description: pythonError.map { $0 as String }
+            ?? "Download M4A fallito senza dettagli.",
+          code: "NATIVE_BRIDGE_ERROR"
+        )
+      }
+
+      let envelope: AuraDownloadEnvelope
+      do {
+        envelope = try JSONDecoder().decode(
+          AuraDownloadEnvelope.self,
+          from: Data((json as String).utf8)
+        )
+      } catch {
+        throw Exception(
+          name: "INVALID_NATIVE_RESPONSE",
+          description: "Il bridge Python ha restituito un risultato download non valido.",
+          code: "INVALID_NATIVE_RESPONSE"
+        )
+      }
+
+      guard envelope.ok, let payload = envelope.data else {
+        let downloadError = envelope.error
+        throw Exception(
+          name: downloadError?.code ?? "DOWNLOAD_ERROR",
+          description: downloadError?.message
+            ?? "Download M4A fallito senza dettagli.",
+          code: downloadError?.code ?? "DOWNLOAD_ERROR"
+        )
+      }
+
+      let resolvedDownloadDirectory = downloadDirectory
+        .resolvingSymlinksInPath()
+        .standardizedFileURL
+      let outputURL = URL(fileURLWithPath: payload.localPath)
+        .resolvingSymlinksInPath()
+        .standardizedFileURL
+      guard payload.success,
+            payload.ext.lowercased() == "m4a",
+            outputURL.deletingLastPathComponent() == resolvedDownloadDirectory,
+            outputURL.lastPathComponent == "\(payload.videoId).m4a" else {
+        throw Exception(
+          name: "INVALID_NATIVE_RESPONSE",
+          description: "Il percorso M4A restituito dal runtime non e valido.",
+          code: "INVALID_NATIVE_RESPONSE"
+        )
+      }
+
+      let attributes: [FileAttributeKey: Any]
+      do {
+        attributes = try fileManager.attributesOfItem(atPath: outputURL.path)
+      } catch {
+        throw Exception(
+          name: "FILESYSTEM_ERROR",
+          description: "Il file M4A finale non e accessibile.",
+          code: "FILESYSTEM_ERROR"
+        )
+      }
+      let fileType = attributes[.type] as? FileAttributeType
+      let verifiedSize = (attributes[.size] as? NSNumber)?.doubleValue ?? 0
+      guard fileType == .typeRegular, verifiedSize > 0 else {
+        throw Exception(
+          name: "FILESYSTEM_ERROR",
+          description: "Il file M4A finale non e un file regolare non vuoto.",
+          code: "FILESYSTEM_ERROR"
+        )
+      }
+
+      var result = AuraDownloadedAudioResult()
+      result.alreadyExists = payload.alreadyExists ?? false
+      result.videoId = payload.videoId
+      result.title = payload.title
+      result.formatId = payload.formatId
+      result.localPath = outputURL.path
+      result.localUri = outputURL.absoluteString
+      result.fileSize = verifiedSize
+      return result
     }
   }
 }

@@ -30,6 +30,14 @@ const unavailableModule: AuraNativeTestModuleApi = {
       'L’estrazione YouTube nativa non è inclusa in questo client. Installa una development build iOS.',
     );
   },
+  async downloadYouTubeM4a() {
+    throw new Error(
+      'Il download M4A nativo non e incluso in questo client. Installa una development build iOS.',
+    );
+  },
+  addListener() {
+    return { remove() {} };
+  },
 };
 
 export default nativeModule ?? unavailableModule;

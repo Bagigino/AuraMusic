@@ -5,6 +5,50 @@
 
 static NSString *AuraPythonInitializationError = nil;
 static dispatch_once_t AuraPythonInitializationOnce;
+static const char *AuraProgressCapsuleName = "AuraMusic.DownloadProgressHandler";
+
+static void AuraProgressCapsuleDestructor(PyObject *capsule) {
+  void *retainedHandler = PyCapsule_GetPointer(capsule, AuraProgressCapsuleName);
+  if (retainedHandler != NULL) {
+    CFRelease(retainedHandler);
+  } else {
+    PyErr_Clear();
+  }
+}
+
+static PyObject *AuraEmitDownloadProgress(PyObject *self, PyObject *arguments) {
+  PyObject *progressJSON = NULL;
+  if (!PyArg_ParseTuple(arguments, "U", &progressJSON)) {
+    return NULL;
+  }
+
+  void *retainedHandler = PyCapsule_GetPointer(self, AuraProgressCapsuleName);
+  if (retainedHandler == NULL) {
+    return NULL;
+  }
+
+  const char *progressUTF8 = PyUnicode_AsUTF8(progressJSON);
+  if (progressUTF8 == NULL) {
+    return NULL;
+  }
+
+  NSString *progress = [NSString stringWithUTF8String:progressUTF8];
+  if (progress == nil) {
+    PyErr_SetString(PyExc_ValueError, "Progress JSON is not valid UTF-8.");
+    return NULL;
+  }
+
+  AuraDownloadProgressHandler handler = (__bridge AuraDownloadProgressHandler)retainedHandler;
+  handler(progress);
+  Py_RETURN_NONE;
+}
+
+static PyMethodDef AuraProgressMethodDefinition = {
+  "emit_progress",
+  AuraEmitDownloadProgress,
+  METH_VARARGS,
+  "Forwards a sanitized yt-dlp progress payload to the Expo module."
+};
 
 static NSString *AuraMessageFromStatus(PyStatus status) {
   if (status.err_msg != NULL) {
@@ -139,6 +183,19 @@ static void AuraAssignError(NSString **errorMessage, NSString *message) {
   if (errorMessage != NULL) {
     *errorMessage = message;
   }
+}
+
+static PyObject *AuraPythonUnicodeFromString(NSString *value) {
+  const char *utf8Value = value.UTF8String;
+  if (utf8Value == NULL) {
+    PyErr_SetString(PyExc_ValueError, "NSString cannot be represented as UTF-8.");
+    return NULL;
+  }
+  return PyUnicode_DecodeUTF8(
+    utf8Value,
+    (Py_ssize_t)[value lengthOfBytesUsingEncoding:NSUTF8StringEncoding],
+    "strict"
+  );
 }
 
 NSInteger AuraTestPython(NSString * _Nullable * _Nullable errorMessage) {
@@ -462,6 +519,157 @@ NSString * _Nullable AuraExtractYouTubeInfo(
 
   if (result == nil) {
     AuraAssignError(errorMessage, @"Il JSON metadata YouTube non è UTF-8 valido.");
+    return nil;
+  }
+  return result;
+}
+
+NSString * _Nullable AuraDownloadYouTubeM4a(
+  NSString *url,
+  NSString * _Nullable formatId,
+  NSString *destinationDirectory,
+  AuraDownloadProgressHandler _Nullable progressHandler,
+  NSString * _Nullable * _Nullable errorMessage
+) {
+  dispatch_once(&AuraPythonInitializationOnce, ^{
+    AuraInitializePython();
+  });
+
+  if (AuraPythonInitializationError != nil || !Py_IsInitialized()) {
+    AuraAssignError(errorMessage, AuraPythonInitializationError ?: @"CPython non e inizializzato.");
+    return nil;
+  }
+
+  PyGILState_STATE gilState = PyGILState_Ensure();
+  PyObject *module = PyImport_ImportModule("aura_youtube_metadata");
+  if (module == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Import del modulo download YouTube fallito: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  PyObject *function = PyObject_GetAttrString(module, "download_youtube_m4a_json");
+  if (function == NULL || !PyCallable_Check(function)) {
+    NSString *detail = PyErr_Occurred()
+      ? AuraCurrentPythonException()
+      : @"download_youtube_m4a_json non e callable.";
+    Py_XDECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, [NSString stringWithFormat:
+      @"Funzione download YouTube non valida: %@", detail]);
+    return nil;
+  }
+
+  PyObject *pythonUrl = AuraPythonUnicodeFromString(url);
+  PyObject *pythonDestination = AuraPythonUnicodeFromString(destinationDirectory);
+  PyObject *pythonFormatId = NULL;
+  if (formatId != nil) {
+    pythonFormatId = AuraPythonUnicodeFromString(formatId);
+  } else {
+    pythonFormatId = Py_NewRef(Py_None);
+  }
+
+  PyObject *pythonProgressHandler = NULL;
+  if (progressHandler != nil) {
+    AuraDownloadProgressHandler copiedHandler = [progressHandler copy];
+    void *retainedHandler = (__bridge_retained void *)copiedHandler;
+    PyObject *handlerCapsule = PyCapsule_New(
+      retainedHandler,
+      AuraProgressCapsuleName,
+      AuraProgressCapsuleDestructor
+    );
+    if (handlerCapsule == NULL) {
+      CFRelease(retainedHandler);
+    } else {
+      pythonProgressHandler = PyCFunction_NewEx(
+        &AuraProgressMethodDefinition,
+        handlerCapsule,
+        NULL
+      );
+      Py_DECREF(handlerCapsule);
+    }
+  } else {
+    pythonProgressHandler = Py_NewRef(Py_None);
+  }
+
+  if (pythonUrl == NULL || pythonDestination == NULL || pythonFormatId == NULL ||
+      pythonProgressHandler == NULL) {
+    NSString *detail = PyErr_Occurred()
+      ? AuraCurrentPythonException()
+      : @"Impossibile preparare gli argomenti Python.";
+    Py_XDECREF(pythonProgressHandler);
+    Py_XDECREF(pythonFormatId);
+    Py_XDECREF(pythonDestination);
+    Py_XDECREF(pythonUrl);
+    Py_DECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, [NSString stringWithFormat:
+      @"Preparazione download YouTube fallita: %@", detail]);
+    return nil;
+  }
+
+  PyObject *arguments = PyTuple_Pack(
+    4,
+    pythonUrl,
+    pythonFormatId,
+    pythonDestination,
+    pythonProgressHandler
+  );
+  Py_DECREF(pythonProgressHandler);
+  Py_DECREF(pythonFormatId);
+  Py_DECREF(pythonDestination);
+  Py_DECREF(pythonUrl);
+
+  if (arguments == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Preparazione argomenti download fallita: %@", AuraCurrentPythonException()];
+    Py_DECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  PyObject *pythonResult = PyObject_CallObject(function, arguments);
+  Py_DECREF(arguments);
+  Py_DECREF(function);
+  Py_DECREF(module);
+
+  if (pythonResult == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Download M4A YouTube fallito: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  if (!PyUnicode_Check(pythonResult)) {
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, @"Il risultato download YouTube non e una stringa JSON.");
+    return nil;
+  }
+
+  const char *resultUTF8 = PyUnicode_AsUTF8(pythonResult);
+  if (resultUTF8 == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Lettura del JSON download YouTube fallita: %@", AuraCurrentPythonException()];
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  NSString *result = [NSString stringWithUTF8String:resultUTF8];
+  Py_DECREF(pythonResult);
+  PyGILState_Release(gilState);
+
+  if (result == nil) {
+    AuraAssignError(errorMessage, @"Il JSON download YouTube non e UTF-8 valido.");
     return nil;
   }
   return result;
