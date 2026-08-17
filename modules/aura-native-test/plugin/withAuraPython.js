@@ -24,6 +24,11 @@ test -f "$PYTHON_APP_PATH/aura_test.py" || {
   exit 1
 }
 
+test -f "$PYTHON_APP_PATH/aura_yt_dlp_apple_provider.py" || {
+  echo "error: aura_yt_dlp_apple_provider.py is missing from the local Expo module."
+  exit 1
+}
+
 test -f "$PYTHON_VENDOR_PATH/yt_dlp/__init__.py" || {
   echo "error: Vendored yt_dlp package is missing from the local Expo module."
   exit 1
@@ -31,6 +36,11 @@ test -f "$PYTHON_VENDOR_PATH/yt_dlp/__init__.py" || {
 
 test -f "$PYTHON_VENDOR_PATH/yt_dlp/version.py" || {
   echo "error: Vendored yt_dlp version module is missing from the local Expo module."
+  exit 1
+}
+
+test -f "$PYTHON_VENDOR_PATH/yt_dlp_plugins/extractor/ytjsc.py" || {
+  echo "error: Vendored Apple WebKit provider is missing from the local Expo module."
   exit 1
 }
 
@@ -142,6 +152,22 @@ module.exports = function withAuraPython(config) {
     if (!fs.existsSync(ytDlpVersionPath)) {
       throw new Error(
         `AuraNativeTest requires vendored yt-dlp before iOS prebuild. Missing: ${ytDlpVersionPath}`,
+      );
+    }
+
+    const appleProviderPath = path.join(
+      modConfig.modRequest.projectRoot,
+      'modules',
+      'aura-native-test',
+      'python-vendor',
+      'yt_dlp_plugins',
+      'extractor',
+      'ytjsc.py',
+    );
+
+    if (!fs.existsSync(appleProviderPath)) {
+      throw new Error(
+        `AuraNativeTest requires the vendored Apple WebKit provider before iOS prebuild. Missing: ${appleProviderPath}`,
       );
     }
 

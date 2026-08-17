@@ -10,6 +10,9 @@ const webModule: AuraNativeTestModuleApi = {
   async testYtDlpImport() {
     return 'yt-dlp unavailable on web';
   },
+  async testYtDlpAppleProvider() {
+    return 'Apple WebKit provider unavailable on web';
+  },
 };
 
 export default webModule;

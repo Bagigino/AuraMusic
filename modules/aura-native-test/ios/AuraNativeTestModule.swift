@@ -14,6 +14,12 @@ private struct AuraYtDlpImportResult: Record {
   @Field var version: String = ""
 }
 
+private struct AuraYtDlpAppleProviderResult: Record {
+  @Field var success: Bool = false
+  @Field var provider: String = ""
+  @Field var version: String = ""
+}
+
 public class AuraNativeTestModule: Module {
   public func definition() -> ModuleDefinition {
     Name("AuraNativeTest")
@@ -44,6 +50,28 @@ public class AuraNativeTestModule: Module {
       }
 
       var result = AuraYtDlpImportResult()
+      result.version = version as String
+      return result
+    }
+
+    AsyncFunction("testYtDlpAppleProvider") { () throws -> AuraYtDlpAppleProviderResult in
+      var success = 0
+      var providerName: NSString?
+      var version: NSString?
+      var pythonError: NSString?
+
+      guard AuraTestYtDlpAppleProvider(&success, &providerName, &version, &pythonError),
+            let providerName,
+            let version else {
+        throw AuraPythonRuntimeError(
+          message: pythonError.map { $0 as String }
+            ?? "Test del provider Apple WebKit fallito senza dettagli."
+        )
+      }
+
+      var result = AuraYtDlpAppleProviderResult()
+      result.success = success != 0
+      result.provider = providerName as String
       result.version = version as String
       return result
     }

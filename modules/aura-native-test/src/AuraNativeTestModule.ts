@@ -20,6 +20,11 @@ const unavailableModule: AuraNativeTestModuleApi = {
       'yt-dlp non è incluso in questo client. Installa una development build iOS.',
     );
   },
+  async testYtDlpAppleProvider() {
+    throw new Error(
+      'Il provider Apple WebKit non è incluso in questo client. Installa una development build iOS.',
+    );
+  },
 };
 
 export default nativeModule ?? unavailableModule;

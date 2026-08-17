@@ -19,6 +19,7 @@ jobs:
       IOS_DEPLOYMENT_TARGET: '16.4'
       PYTHON_XCFRAMEWORK_PATH: modules/aura-native-test/ios/Python.xcframework
       YT_DLP_VERSION: '2026.07.04'
+      YT_DLP_APPLE_PROVIDER_VERSION: '0.1.1'
       YT_DLP_VENDOR_PATH: modules/aura-native-test/python-vendor
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
@@ -38,7 +39,7 @@ jobs:
         with:
           python-version: '3.14.7'
 
-      - name: Vendor pinned yt-dlp package
+      - name: Vendor pinned yt-dlp packages
         shell: bash
         run: |
           if [ -e "$YT_DLP_VENDOR_PATH" ]; then
@@ -60,6 +61,19 @@ jobs:
           # Console launchers, shell completions and man pages cannot be used by
           # the embedded interpreter. Keep the Python package and dist-info only.
           rm -rf "$YT_DLP_VENDOR_PATH/bin" "$YT_DLP_VENDOR_PATH/share"
+          YT_DLP_ONLY_BYTES=$(du -sk "$YT_DLP_VENDOR_PATH" | awk '{ print $1 * 1024 }')
+
+          if ! python3 -m pip install \
+            --disable-pip-version-check \
+            --target "$YT_DLP_VENDOR_PATH" \
+            --no-compile \
+            --no-deps \
+            "yt-dlp-apple-webkit-jsi==$YT_DLP_APPLE_PROVIDER_VERSION"; then
+            echo "::error title=Apple WebKit provider vendoring failed::Could not install the pinned yt-dlp-apple-webkit-jsi package."
+            exit 1
+          fi
+
+          rm -rf "$YT_DLP_VENDOR_PATH/bin" "$YT_DLP_VENDOR_PATH/share"
 
           test -f "$YT_DLP_VENDOR_PATH/yt_dlp/__init__.py" || {
             echo "::error title=yt-dlp package missing::yt_dlp/__init__.py was not vendored."
@@ -71,18 +85,72 @@ jobs:
             exit 1
           }
 
+          for provider_file in \
+            yt_dlp_plugins/extractor/webkit_jsi.py \
+            yt_dlp_plugins/extractor/ytjsc.py \
+            yt_dlp_plugins/webkit_jsi/lib/api.py \
+            yt_dlp_plugins/webkit_jsi/lib/pyneapple_objc.py; do
+            test -f "$YT_DLP_VENDOR_PATH/$provider_file" || {
+              echo "::error title=Apple WebKit provider file missing::$provider_file was not vendored."
+              exit 1
+            }
+          done
+
           PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$YT_DLP_VENDOR_PATH" \
-            python3 - "$YT_DLP_VERSION" <<'PYTHON'
+            python3 - "$YT_DLP_VERSION" "$YT_DLP_APPLE_PROVIDER_VERSION" <<'PYTHON'
+          import importlib.metadata
+          import importlib.util
           import sys
           import yt_dlp
+          import yt_dlp.extractor
+          from yt_dlp.extractor.youtube.jsc._registry import _jsc_providers
+          from yt_dlp.globals import all_plugins_loaded
+          from yt_dlp.plugins import directories, load_all_plugins
           from yt_dlp.version import __version__
 
-          expected = sys.argv[1]
-          if __version__ != expected:
+          expected_yt_dlp = sys.argv[1]
+          expected_provider = sys.argv[2]
+          if __version__ != expected_yt_dlp:
               raise SystemExit(
-                  f"Vendored yt-dlp version mismatch: expected {expected}, found {__version__}"
+                  f"Vendored yt-dlp version mismatch: expected {expected_yt_dlp}, found {__version__}"
+              )
+
+          package_version = importlib.metadata.version('yt-dlp-apple-webkit-jsi')
+          if package_version != expected_provider:
+              raise SystemExit(
+                  f"Apple provider version mismatch: expected {expected_provider}, found {package_version}"
+              )
+
+          namespace_spec = importlib.util.find_spec('yt_dlp_plugins')
+          namespace_locations = list(namespace_spec.submodule_search_locations or []) if namespace_spec else []
+          if not namespace_locations or not directories():
+              raise SystemExit('yt_dlp_plugins is not visible through yt-dlp plugin discovery')
+
+          if not all_plugins_loaded.value:
+              load_all_plugins()
+          providers = {
+              provider.PROVIDER_NAME: provider
+              for provider in _jsc_providers.value.values()
+          }
+          apple_provider = providers.get('apple-webkit-jsi')
+          if apple_provider is None:
+              raise SystemExit(
+                  'apple-webkit-jsi was not registered as a yt-dlp JS Challenge Provider'
+              )
+          if apple_provider.PROVIDER_VERSION != package_version:
+              raise SystemExit(
+                  'Registered Apple provider version does not match package metadata: '
+                  f'{apple_provider.PROVIDER_VERSION!r} != {package_version!r}'
+              )
+          if not apple_provider.__module__.startswith('yt_dlp_plugins.'):
+              raise SystemExit(
+                  f'Apple provider came from unexpected module {apple_provider.__module__!r}'
               )
           print(f"Verified vendored yt-dlp {__version__}")
+          print(
+              f"Verified registered Apple WebKit provider "
+              f"{apple_provider.PROVIDER_NAME}-{apple_provider.PROVIDER_VERSION}"
+          )
           PYTHON
 
           if [ -e "$YT_DLP_VENDOR_PATH/yt_dlp_ejs" ]; then
@@ -91,11 +159,14 @@ jobs:
           fi
 
           VENDOR_BYTES=$(du -sk "$YT_DLP_VENDOR_PATH" | awk '{ print $1 * 1024 }')
+          APPLE_PROVIDER_BYTES=$((VENDOR_BYTES - YT_DLP_ONLY_BYTES))
           {
-            echo "### Vendored Python package"
+            echo "### Vendored Python packages"
             echo "- yt-dlp version: $YT_DLP_VERSION"
+            echo "- Apple WebKit provider version: $YT_DLP_APPLE_PROVIDER_VERSION"
             echo "- Source directory: $YT_DLP_VENDOR_PATH"
             echo "- Uncompressed bytes: $VENDOR_BYTES"
+            echo "- Approximate provider addition: $APPLE_PROVIDER_BYTES bytes"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Initialize build paths
@@ -248,9 +319,19 @@ jobs:
             exit 1
           }
 
+          test -f modules/aura-native-test/python/aura_yt_dlp_apple_provider.py || {
+            echo "::error title=Apple provider test missing::aura_yt_dlp_apple_provider.py was not found."
+            exit 1
+          }
+
 
           test -f "$YT_DLP_VENDOR_PATH/yt_dlp/version.py" || {
             echo "::error title=Vendored yt-dlp missing::yt_dlp/version.py was not found before Expo Prebuild."
+            exit 1
+          }
+
+          test -f "$YT_DLP_VENDOR_PATH/yt_dlp_plugins/extractor/ytjsc.py" || {
+            echo "::error title=Vendored Apple provider missing::yt_dlp_plugins/extractor/ytjsc.py was not found before Expo Prebuild."
             exit 1
           }
 
@@ -429,6 +510,11 @@ jobs:
             exit 1
           }
 
+          test -f "$APP_PATH/app/aura_yt_dlp_apple_provider.py" || {
+            echo "::error title=Apple provider test missing::aura_yt_dlp_apple_provider.py was not found in the app bundle."
+            exit 1
+          }
+
 
           test -f "$APP_PATH/python-vendor/yt_dlp/__init__.py" || {
             echo "::error title=Vendored yt-dlp missing::yt_dlp/__init__.py was not found in the app bundle."
@@ -443,6 +529,34 @@ jobs:
 
           if ! grep -Fq "__version__ = '$YT_DLP_VERSION'" "$YT_DLP_BUNDLED_VERSION_FILE"; then
             echo "::error title=yt-dlp bundle version mismatch::The app bundle does not contain yt-dlp $YT_DLP_VERSION."
+            exit 1
+          fi
+
+          for provider_file in \
+            yt_dlp_plugins/extractor/webkit_jsi.py \
+            yt_dlp_plugins/extractor/ytjsc.py \
+            yt_dlp_plugins/webkit_jsi/lib/api.py \
+            yt_dlp_plugins/webkit_jsi/lib/pyneapple_objc.py; do
+            test -f "$APP_PATH/python-vendor/$provider_file" || {
+              echo "::error title=Apple WebKit provider missing from app::$provider_file was not found in the app bundle."
+              exit 1
+            }
+          done
+
+          APPLE_PROVIDER_METADATA=$(find "$APP_PATH/python-vendor" -maxdepth 1 \
+            -type d -name 'yt_dlp_apple_webkit_jsi-*.dist-info' -print -quit)
+          test -n "$APPLE_PROVIDER_METADATA" || {
+            echo "::error title=Apple provider metadata missing::Package metadata was not found in the app bundle."
+            exit 1
+          }
+          if ! grep -Fxq "Version: $YT_DLP_APPLE_PROVIDER_VERSION" "$APPLE_PROVIDER_METADATA/METADATA"; then
+            echo "::error title=Apple provider bundle version mismatch::The app bundle does not contain yt-dlp-apple-webkit-jsi $YT_DLP_APPLE_PROVIDER_VERSION."
+            exit 1
+          fi
+
+          if ! grep -Fq "load_framework_from_path('WebKit')" \
+            "$APP_PATH/python-vendor/yt_dlp_plugins/webkit_jsi/lib/api.py"; then
+            echo "::error title=WebKit loader missing::The bundled provider does not contain its dynamic WebKit loader."
             exit 1
           fi
 
@@ -464,6 +578,9 @@ jobs:
           echo "- CPython version: $CPYTHON_VERSION" >> "$GITHUB_STEP_SUMMARY"
           echo "- yt-dlp version: $YT_DLP_VERSION" >> "$GITHUB_STEP_SUMMARY"
           echo "- yt-dlp bundle path: $APP_PATH/python-vendor/yt_dlp" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Apple WebKit provider version: $YT_DLP_APPLE_PROVIDER_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Apple WebKit provider path: $APP_PATH/python-vendor/yt_dlp_plugins" >> "$GITHUB_STEP_SUMMARY"
+          echo "- WebKit access: dynamic system-framework loading (no link-time dependency)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package unsigned IPA
         id: package

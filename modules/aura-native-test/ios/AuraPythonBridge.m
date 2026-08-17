@@ -260,3 +260,115 @@ NSString * _Nullable AuraTestYtDlpImport(NSString * _Nullable * _Nullable errorM
 
   return version;
 }
+
+BOOL AuraTestYtDlpAppleProvider(
+  NSInteger * _Nullable success,
+  NSString * _Nullable * _Nullable providerName,
+  NSString * _Nullable * _Nullable version,
+  NSString * _Nullable * _Nullable errorMessage
+) {
+  dispatch_once(&AuraPythonInitializationOnce, ^{
+    AuraInitializePython();
+  });
+
+  if (AuraPythonInitializationError != nil || !Py_IsInitialized()) {
+    AuraAssignError(errorMessage, AuraPythonInitializationError ?: @"CPython non è inizializzato.");
+    return NO;
+  }
+
+  PyGILState_STATE gilState = PyGILState_Ensure();
+  PyObject *module = PyImport_ImportModule("aura_yt_dlp_apple_provider");
+  if (module == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Import del test Apple WebKit fallito: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return NO;
+  }
+
+  PyObject *function = PyObject_GetAttrString(module, "test_apple_webkit_provider");
+  if (function == NULL || !PyCallable_Check(function)) {
+    NSString *detail = PyErr_Occurred()
+      ? AuraCurrentPythonException()
+      : @"test_apple_webkit_provider non è callable.";
+    Py_XDECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, [NSString stringWithFormat:
+      @"Funzione di test Apple WebKit non valida: %@", detail]);
+    return NO;
+  }
+
+  PyObject *pythonResult = PyObject_CallNoArgs(function);
+  Py_DECREF(function);
+  Py_DECREF(module);
+
+  if (pythonResult == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Test Apple WebKit fallito: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return NO;
+  }
+
+  if (!PyDict_Check(pythonResult)) {
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, @"Il test Apple WebKit non ha restituito un dizionario.");
+    return NO;
+  }
+
+  PyObject *successObject = PyDict_GetItemString(pythonResult, "success");
+  PyObject *providerValue = PyDict_GetItemString(pythonResult, "provider");
+  PyObject *versionValue = PyDict_GetItemString(pythonResult, "version");
+  if (successObject == NULL || !PyBool_Check(successObject) ||
+      providerValue == NULL || !PyUnicode_Check(providerValue) ||
+      versionValue == NULL || !PyUnicode_Check(versionValue)) {
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, @"Il risultato del test Apple WebKit non è valido.");
+    return NO;
+  }
+
+  int resolvedSuccess = PyObject_IsTrue(successObject);
+  if (resolvedSuccess < 0) {
+    NSString *message = [NSString stringWithFormat:
+      @"Lettura dello stato Apple WebKit fallita: %@", AuraCurrentPythonException()];
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return NO;
+  }
+
+  const char *providerUtf8 = PyUnicode_AsUTF8(providerValue);
+  const char *versionUtf8 = PyUnicode_AsUTF8(versionValue);
+  if (providerUtf8 == NULL || versionUtf8 == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Lettura del risultato Apple WebKit fallita: %@", AuraCurrentPythonException()];
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return NO;
+  }
+
+  NSString *resolvedProvider = [NSString stringWithUTF8String:providerUtf8];
+  NSString *resolvedVersion = [NSString stringWithUTF8String:versionUtf8];
+  Py_DECREF(pythonResult);
+  PyGILState_Release(gilState);
+
+  if (resolvedProvider == nil || resolvedVersion == nil) {
+    AuraAssignError(errorMessage, @"Il risultato Apple WebKit non è UTF-8 valido.");
+    return NO;
+  }
+
+  if (success != NULL) {
+    *success = resolvedSuccess;
+  }
+  if (providerName != NULL) {
+    *providerName = resolvedProvider;
+  }
+  if (version != NULL) {
+    *version = resolvedVersion;
+  }
+  return YES;
+}
