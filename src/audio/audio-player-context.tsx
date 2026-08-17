@@ -15,6 +15,11 @@ import {
   useState,
 } from 'react';
 
+import {
+  clampSeekPosition,
+  getRelativeSeekPosition,
+  getSeekResumePosition,
+} from '@/audio/seek-controller';
 import type { PlayerSource, YouTubePlayableTrack } from '@/models/player-source';
 import type { Track } from '@/models/track';
 import { appPlaybackSourceService } from '@/services/app-playback-source-service';
@@ -83,6 +88,7 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
   const refreshInFlight = useRef(false);
   const handledStatusError = useRef<string | null>(null);
   const pendingResume = useRef<{ position: number; shouldPlay: boolean } | null>(null);
+  const desiredSeekPosition = useRef<number | null>(null);
 
   const ensureAudioMode = useCallback(() => {
     audioModePromise.current ??= setAudioModeAsync({
@@ -125,6 +131,8 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
       const nextRequestId = ++requestId.current;
       remoteRefreshCount.current = 0;
       refreshInFlight.current = false;
+      pendingResume.current = null;
+      desiredSeekPosition.current = null;
       setIsResolving(true);
       setPlaybackError(null);
       setCurrentItem(trackToPlayableTrack(track));
@@ -143,6 +151,8 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
       const nextRequestId = ++requestId.current;
       remoteRefreshCount.current = 0;
       refreshInFlight.current = false;
+      pendingResume.current = null;
+      desiredSeekPosition.current = null;
       sourceRef.current = null;
       setSourceState(null);
       setCurrentItem(video);
@@ -171,11 +181,69 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
     [commitSource, ensureAudioMode, player],
   );
 
+  const refreshRemoteAtPosition = useCallback(
+    async (
+      currentSource: Extract<PlayerSource, { type: 'remote' }>,
+      position: number,
+      shouldPlay: boolean,
+      originalError: string,
+    ) => {
+      if (refreshInFlight.current) {
+        return true;
+      }
+      if (!canRefreshRemotePlayback(currentSource, remoteRefreshCount.current)) {
+        return false;
+      }
+
+      const refreshCount = remoteRefreshCount.current;
+      remoteRefreshCount.current += 1;
+      refreshInFlight.current = true;
+      setIsResolving(true);
+      setPlaybackError(null);
+      const refreshRequestId = requestId.current;
+
+      try {
+        const refreshedSource = await refreshRemotePlayerSource(
+          currentSource,
+          refreshCount,
+          appPlaybackSourceService,
+        );
+        if (refreshRequestId !== requestId.current) {
+          return true;
+        }
+        if (!refreshedSource) {
+          throw new Error('La sorgente streaming non può essere aggiornata di nuovo.');
+        }
+        pendingResume.current = { position, shouldPlay };
+        commitSource(refreshedSource, false);
+        handledStatusError.current = originalError;
+        return true;
+      } catch (refreshError) {
+        if (refreshRequestId === requestId.current) {
+          console.error('AuraMusic remote playback refresh failed', refreshError);
+          setIsResolving(false);
+          setPlaybackError(getUserFacingError(refreshError));
+        }
+        return false;
+      } finally {
+        refreshInFlight.current = false;
+      }
+    },
+    [commitSource],
+  );
+
   useEffect(() => {
     const currentSource = sourceRef.current;
     const error = status.error;
     if (!error) {
       handledStatusError.current = null;
+      if (
+        desiredSeekPosition.current !== null &&
+        status.isLoaded &&
+        Math.abs(status.currentTime - desiredSeekPosition.current) < 1
+      ) {
+        desiredSeekPosition.current = null;
+      }
       return;
     }
     if (error === handledStatusError.current || refreshInFlight.current) {
@@ -183,52 +251,31 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
     }
     handledStatusError.current = error;
 
-    if (
-      !currentSource ||
-      currentSource.type !== 'remote' ||
-      !canRefreshRemotePlayback(currentSource, remoteRefreshCount.current)
-    ) {
+    if (!currentSource || currentSource.type !== 'remote') {
       console.error('AuraMusic audio player failed', error);
       setPlaybackError(
-        currentSource?.type === 'remote'
-          ? 'La sorgente streaming non è più riproducibile.'
-          : 'Il file audio locale non può essere riprodotto.',
+        'Il file audio locale non può essere riprodotto.',
       );
       return;
     }
 
-    const refreshCount = remoteRefreshCount.current;
-    remoteRefreshCount.current += 1;
-    refreshInFlight.current = true;
-    setIsResolving(true);
-    setPlaybackError(null);
-    const refreshRequestId = requestId.current;
-    const position = status.currentTime;
+    const position = getSeekResumePosition(status.currentTime, desiredSeekPosition.current);
     const shouldPlay = status.playing || status.timeControlStatus === 'waiting';
 
-    void refreshRemotePlayerSource(currentSource, refreshCount, appPlaybackSourceService)
-      .then((refreshedSource) => {
-        if (refreshRequestId !== requestId.current) {
-          return;
-        }
-        if (!refreshedSource) {
-          throw new Error('La sorgente streaming non può essere aggiornata di nuovo.');
-        }
-        pendingResume.current = { position, shouldPlay };
-        commitSource(refreshedSource, false);
-        handledStatusError.current = error;
-      })
-      .catch((refreshError: unknown) => {
-        if (refreshRequestId === requestId.current) {
-          console.error('AuraMusic remote playback refresh failed', refreshError);
-          setIsResolving(false);
-          setPlaybackError(getUserFacingError(refreshError));
-        }
-      })
-      .finally(() => {
-        refreshInFlight.current = false;
-      });
-  }, [commitSource, status.currentTime, status.error, status.playing, status.timeControlStatus]);
+    void refreshRemoteAtPosition(currentSource, position, shouldPlay, error).then((refreshed) => {
+      if (!refreshed) {
+        console.error('AuraMusic audio player failed', error);
+        setPlaybackError('La sorgente streaming non è più riproducibile.');
+      }
+    });
+  }, [
+    refreshRemoteAtPosition,
+    status.currentTime,
+    status.error,
+    status.isLoaded,
+    status.playing,
+    status.timeControlStatus,
+  ]);
 
   useEffect(() => {
     const pending = pendingResume.current;
@@ -240,6 +287,9 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
       if (pending.shouldPlay) {
         player.play();
       }
+    }).catch((resumeError: unknown) => {
+      console.error('AuraMusic playback resume after refresh failed', resumeError);
+      setPlaybackError(getUserFacingError(resumeError));
     });
   }, [player, status.error, status.isLoaded]);
 
@@ -263,16 +313,52 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
         return;
       }
       const duration = status.duration || currentItem.duration || 0;
-      await player.seekTo(Math.min(duration, Math.max(0, seconds)));
+      const target = clampSeekPosition(seconds, duration);
+      if (target === null) {
+        return;
+      }
+      desiredSeekPosition.current = target;
+      try {
+        await player.seekTo(target);
+      } catch (seekError) {
+        const currentSource = sourceRef.current;
+        console.error('AuraMusic direct seek failed', seekError);
+        if (currentSource?.type === 'remote') {
+          const refreshed = await refreshRemoteAtPosition(
+            currentSource,
+            target,
+            status.playing || status.timeControlStatus === 'waiting',
+            seekError instanceof Error ? seekError.message : String(seekError),
+          );
+          if (refreshed) {
+            return;
+          }
+          setPlaybackError('La sorgente streaming non è più riproducibile.');
+        } else {
+          setPlaybackError('Il file audio locale non può essere riprodotto.');
+        }
+        throw seekError;
+      }
     },
-    [currentItem, player, status.duration],
+    [
+      currentItem,
+      player,
+      refreshRemoteAtPosition,
+      status.duration,
+      status.playing,
+      status.timeControlStatus,
+    ],
   );
 
   const seekBy = useCallback(
     async (seconds: number) => {
-      await seekTo(status.currentTime + seconds);
+      const duration = status.duration || currentItem?.duration || 0;
+      const target = getRelativeSeekPosition(status.currentTime, seconds, duration);
+      if (target !== null) {
+        await seekTo(target);
+      }
     },
-    [seekTo, status.currentTime],
+    [currentItem?.duration, seekTo, status.currentTime, status.duration],
   );
 
   return (

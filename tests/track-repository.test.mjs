@@ -39,8 +39,10 @@ test('saveTrack persists the complete Track metadata', async () => {
 });
 
 test('getTracks restores SQLite rows and initializes file availability', async () => {
+  let query = '';
   const tracks = await getTracks({
-    async getAllAsync() {
+    async getAllAsync(sql) {
+      query = sql;
       return [
         {
           id: track.id,
@@ -56,6 +58,7 @@ test('getTracks restores SQLite rows and initializes file availability', async (
     },
   });
   assert.deepEqual(tracks, [track]);
+  assert.match(query, /ORDER BY downloaded_at DESC/);
 });
 
 test('deleteTrack removes only the requested SQLite record', async () => {

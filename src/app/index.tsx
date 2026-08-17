@@ -2,7 +2,6 @@ import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   StyleSheet,
@@ -11,57 +10,26 @@ import {
   View,
 } from 'react-native';
 
-import { useAppAudioPlayer } from '@/audio/audio-player-context';
 import { AuraButton } from '@/components/aura-button';
 import { AuraScreen } from '@/components/aura-screen';
-import { TrackArtwork } from '@/components/track-artwork';
 import { AuraColors } from '@/constants/aura-theme';
 import { usePlaylists } from '@/library/playlist-context';
 import { useTrackLibrary } from '@/library/track-library-context';
-import type { Track } from '@/models/track';
-import { formatDuration } from '@/utils/format-duration';
 import { getUserFacingError } from '@/utils/get-user-facing-error';
 
 export default function LibraryScreen() {
   const router = useRouter();
-  const { tracks, isLoading, error, removeTrack } = useTrackLibrary();
+  const { tracks, isLoading, error } = useTrackLibrary();
   const {
     playlists,
     isLoading: playlistsLoading,
     error: playlistsError,
     createPlaylist,
-    refreshPlaylists,
   } = usePlaylists();
-  const { playTrack } = useAppAudioPlayer();
   const [createVisible, setCreateVisible] = useState(false);
   const [playlistName, setPlaylistName] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-
-  const openTrack = async (track: Track) => {
-    if (track.missingLocalFile) {
-      return;
-    }
-    await playTrack(track);
-    router.push('/player');
-  };
-
-  const confirmRemoveTrack = (track: Track) => {
-    Alert.alert(
-      'Elimina brano',
-      `Rimuovere "${track.title}" dalla Library, da tutte le playlist e dal dispositivo?`,
-      [
-        { text: 'Annulla', style: 'cancel' },
-        {
-          text: 'Elimina',
-          style: 'destructive',
-          onPress: () => {
-            void removeTrack(track).then(refreshPlaylists).catch(() => undefined);
-          },
-        },
-      ],
-    );
-  };
 
   const handleCreatePlaylist = async () => {
     setCreating(true);
@@ -79,72 +47,33 @@ export default function LibraryScreen() {
 
   return (
     <AuraScreen title="La tua musica" subtitle="Brani offline e playlist salvati sul dispositivo.">
-      <View style={styles.allSongsHeader}>
+      <Pressable
+        accessibilityHint="Apre tutti i brani salvati nella Library"
+        accessibilityRole="button"
+        onPress={() => router.push('./all-songs')}
+        style={({ pressed }) => [styles.allSongsCard, pressed && styles.pressed]}>
         <View>
-          <Text style={styles.sectionTitle}>All Songs</Text>
+          <Text style={styles.collectionLabel}>LIBRARY</Text>
+          <Text style={styles.sectionTitle}>Le mie canzoni</Text>
           <Text style={styles.sectionSubtitle}>
-            {tracks.length === 1 ? '1 track' : `${tracks.length} tracks`}
+            {isLoading
+              ? 'Caricamento…'
+              : tracks.length === 1
+                ? '1 brano'
+                : `${tracks.length} brani`}
           </Text>
         </View>
         <View style={styles.allSongsIcon}>
-          <Text style={styles.allSongsIconText}>♫</Text>
+          {isLoading ? (
+            <ActivityIndicator color={AuraColors.primary} />
+          ) : (
+            <Text style={styles.allSongsIconText}>♫</Text>
+          )}
         </View>
-      </View>
+      </Pressable>
 
-      {isLoading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator color={AuraColors.primary} />
-          <Text style={styles.mutedText}>Carico la libreria…</Text>
-        </View>
-      ) : tracks.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>Nessun brano offline</Text>
-          <Text style={styles.emptyText}>
-            Cerca un brano, ascoltalo nel Player e premi + per salvarlo in una playlist.
-          </Text>
-          <AuraButton label="Apri Search" onPress={() => router.push('/search')} />
-        </View>
-      ) : (
-        <View style={styles.trackList}>
-          {tracks.map((track) => (
-            <View key={track.id} style={styles.trackCard}>
-              <Pressable
-                accessibilityHint={
-                  track.missingLocalFile
-                    ? 'Il file locale non è disponibile'
-                    : 'Apre il Player e avvia il brano locale'
-                }
-                accessibilityRole="button"
-                accessibilityState={{ disabled: track.missingLocalFile }}
-                disabled={track.missingLocalFile}
-                onPress={() => void openTrack(track)}
-                style={({ pressed }) => [
-                  styles.trackMain,
-                  track.missingLocalFile && styles.unavailable,
-                  pressed && styles.pressed,
-                ]}>
-                <TrackArtwork size={64} thumbnail={track.thumbnail} />
-                <View style={styles.trackDetails}>
-                  <Text numberOfLines={1} style={styles.trackTitle}>{track.title}</Text>
-                  <Text numberOfLines={1} style={styles.trackArtist}>{track.artist}</Text>
-                  <View style={styles.metadataRow}>
-                    <Text style={track.missingLocalFile ? styles.missingBadge : styles.localBadge}>
-                      {track.missingLocalFile ? 'FILE MANCANTE' : '● LOCALE'}
-                    </Text>
-                    <Text style={styles.duration}>{formatDuration(track.duration)}</Text>
-                  </View>
-                </View>
-                <Text style={styles.playIcon}>▶</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel={`Elimina ${track.title}`}
-                onPress={() => confirmRemoveTrack(track)}
-                style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}>
-                <Text style={styles.deleteText}>Elimina</Text>
-              </Pressable>
-            </View>
-          ))}
-        </View>
+      {!isLoading && tracks.length === 0 && (
+        <Text style={styles.libraryHint}>La Library è vuota. Puoi aggiungere musica da Search.</Text>
       )}
 
       <View style={styles.playlistsSection}>
@@ -225,7 +154,7 @@ export default function LibraryScreen() {
 }
 
 const styles = StyleSheet.create({
-  allSongsHeader: {
+  allSongsCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -236,28 +165,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginBottom: 14,
   },
+  collectionLabel: {
+    color: AuraColors.primary,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.4,
+    marginBottom: 6,
+  },
   allSongsIcon: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#33255D' },
   allSongsIconText: { color: AuraColors.primary, fontSize: 24 },
   sectionTitle: { color: AuraColors.text, fontSize: 20, fontWeight: '900' },
   sectionSubtitle: { color: AuraColors.textMuted, fontSize: 13, marginTop: 4 },
-  centerState: { alignItems: 'center', justifyContent: 'center', gap: 12, minHeight: 160 },
   mutedText: { color: AuraColors.textMuted, fontSize: 14, lineHeight: 20 },
-  emptyCard: { alignItems: 'center', gap: 14, padding: 24, borderRadius: 22, backgroundColor: AuraColors.surface, borderColor: AuraColors.border, borderWidth: 1 },
-  emptyTitle: { color: AuraColors.text, fontSize: 19, fontWeight: '800' },
-  emptyText: { color: AuraColors.textMuted, fontSize: 14, lineHeight: 21, textAlign: 'center' },
-  trackList: { gap: 12 },
-  trackCard: { overflow: 'hidden', borderRadius: 20, backgroundColor: AuraColors.surface, borderColor: AuraColors.border, borderWidth: 1 },
-  trackMain: { flexDirection: 'row', alignItems: 'center', gap: 13, padding: 13 },
-  trackDetails: { flex: 1, minWidth: 0 },
-  trackTitle: { color: AuraColors.text, fontSize: 15, fontWeight: '800' },
-  trackArtist: { color: AuraColors.textMuted, fontSize: 13, marginTop: 3 },
-  metadataRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  localBadge: { color: AuraColors.success, fontSize: 9, fontWeight: '900', letterSpacing: 0.6 },
-  missingBadge: { color: AuraColors.danger, fontSize: 9, fontWeight: '900', letterSpacing: 0.6 },
-  duration: { color: AuraColors.textMuted, fontSize: 11 },
-  playIcon: { color: AuraColors.primary, fontSize: 18 },
-  deleteButton: { alignItems: 'center', paddingVertical: 9, borderTopColor: AuraColors.border, borderTopWidth: 1 },
-  deleteText: { color: AuraColors.danger, fontSize: 12, fontWeight: '800' },
+  libraryHint: { color: AuraColors.textMuted, fontSize: 13, lineHeight: 19, marginHorizontal: 4 },
   playlistsSection: { gap: 12, marginTop: 30 },
   playlistCard: { flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 20, backgroundColor: AuraColors.surface, borderColor: AuraColors.border, borderWidth: 1 },
   playlistIcon: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#2B2144' },
@@ -267,7 +187,6 @@ const styles = StyleSheet.create({
   chevron: { color: AuraColors.primary, fontSize: 28 },
   newPlaylistButton: { alignItems: 'center', padding: 16, borderRadius: 18, borderColor: AuraColors.primary, borderWidth: 1 },
   newPlaylistText: { color: AuraColors.primary, fontSize: 14, fontWeight: '900' },
-  unavailable: { opacity: 0.48 },
   pressed: { opacity: 0.72 },
   error: { color: AuraColors.danger, fontSize: 13, lineHeight: 19, textAlign: 'center' },
   modalBackdrop: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.72)' },

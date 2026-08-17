@@ -81,6 +81,7 @@ export default function TabLayout() {
                 }}
               />
               <Tabs.Screen name="add-track" options={{ href: null }} />
+              <Tabs.Screen name="all-songs" options={{ href: null }} />
               <Tabs.Screen name="playlist" options={{ href: null }} />
             </Tabs>
             </AudioPlayerProvider>

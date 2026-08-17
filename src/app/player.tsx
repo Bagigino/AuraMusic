@@ -6,12 +6,12 @@ import {
   StyleSheet,
   Text,
   View,
-  type LayoutChangeEvent,
 } from 'react-native';
 
 import { useAppAudioPlayer } from '@/audio/audio-player-context';
 import { AuraButton } from '@/components/aura-button';
 import { AuraScreen } from '@/components/aura-screen';
+import { PlayerSeekBar } from '@/components/player-seek-bar';
 import { PlaylistPicker } from '@/components/playlist-picker';
 import { TrackArtwork } from '@/components/track-artwork';
 import { AuraColors } from '@/constants/aura-theme';
@@ -19,7 +19,6 @@ import { usePlaylists } from '@/library/playlist-context';
 import { useTrackLibrary } from '@/library/track-library-context';
 import type { TrackAvailability } from '@/models/player-source';
 import type { DownloadProgress } from '@/services/download-service';
-import { formatDuration } from '@/utils/format-duration';
 import { getUserFacingError } from '@/utils/get-user-facing-error';
 
 function progressLabel(progress: DownloadProgress | null) {
@@ -48,7 +47,6 @@ export default function PlayerScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [membershipCount, setMembershipCount] = useState(0);
-  const [timelineWidth, setTimelineWidth] = useState(0);
 
   const libraryTrack = currentItem
     ? tracks.find((track) => track.id === currentItem.id && !track.missingLocalFile) ?? null
@@ -96,7 +94,6 @@ export default function PlayerScreen() {
   }
 
   const duration = status.duration || currentItem.duration || 0;
-  const progress = duration > 0 ? Math.min(1, status.currentTime / duration) : 0;
   const buffering = isResolving || (!!source && !status.isLoaded) || status.isBuffering;
   const visiblePlaybackError = isResolving
     ? null
@@ -127,17 +124,6 @@ export default function PlayerScreen() {
       setIsSaving(false);
       setDownloadProgress(null);
     }
-  };
-
-  const handleTimelinePress = (locationX: number) => {
-    if (timelineWidth <= 0 || duration <= 0 || !status.isLoaded) {
-      return;
-    }
-    void seekTo((Math.min(timelineWidth, Math.max(0, locationX)) / timelineWidth) * duration);
-  };
-
-  const handleTimelineLayout = (event: LayoutChangeEvent) => {
-    setTimelineWidth(event.nativeEvent.layout.width);
   };
 
   return (
@@ -181,22 +167,12 @@ export default function PlayerScreen() {
           </Text>
         </View>
 
-        <View style={styles.timeline}>
-          <Pressable
-            accessibilityHint="Tocca per cambiare posizione"
-            accessibilityLabel="Posizione nel brano"
-            accessibilityRole="adjustable"
-            disabled={!status.isLoaded || duration <= 0}
-            onLayout={handleTimelineLayout}
-            onPress={(event) => handleTimelinePress(event.nativeEvent.locationX)}
-            style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-          </Pressable>
-          <View style={styles.timeRow}>
-            <Text style={styles.time}>{formatDuration(status.currentTime)}</Text>
-            <Text style={styles.time}>{formatDuration(duration)}</Text>
-          </View>
-        </View>
+        <PlayerSeekBar
+          currentTime={status.currentTime}
+          disabled={!status.isLoaded}
+          duration={duration}
+          onSeek={seekTo}
+        />
 
         <View style={styles.controls}>
           <Pressable
@@ -231,25 +207,17 @@ export default function PlayerScreen() {
 
         <View style={styles.bottomActions}>
           <Pressable
-            accessibilityLabel="Gestisci playlist"
+            accessibilityLabel={membershipCount > 0 ? 'Gestisci playlist' : 'Aggiungi a playlist'}
             accessibilityRole="button"
             disabled={isSaving}
             onPress={() => setPickerVisible(true)}
-            style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
+            style={({ pressed }) => [
+              styles.addButton,
+              isSaving && styles.disabled,
+              pressed && styles.pressed,
+            ]}>
             <Text style={styles.addSymbol}>{membershipCount > 0 ? '✓' : '+'}</Text>
           </Pressable>
-          <View style={styles.addStatus}>
-            <Text style={styles.addTitle}>
-              {membershipCount > 0 ? 'Nelle tue playlist' : 'Add to playlist'}
-            </Text>
-            <Text style={styles.addSubtitle}>
-              {isSaving
-                ? progressLabel(downloadProgress)
-                : libraryTrack
-                  ? 'Gestisci le raccolte senza riscaricare'
-                  : 'Scegli una playlist per salvarlo offline'}
-            </Text>
-          </View>
         </View>
 
         {visiblePlaybackError && <Text style={styles.error}>{visiblePlaybackError}</Text>}
@@ -299,18 +267,6 @@ const styles = StyleSheet.create({
   remotePill: { backgroundColor: '#2B2144' },
   availabilityText: { color: AuraColors.success, fontSize: 9, fontWeight: '900', letterSpacing: 0.7 },
   remoteText: { color: AuraColors.primary },
-  timeline: { width: '100%', marginTop: 34 },
-  progressTrack: {
-    width: '100%',
-    height: 12,
-    justifyContent: 'center',
-    borderRadius: 999,
-    overflow: 'hidden',
-    backgroundColor: AuraColors.surfaceRaised,
-  },
-  progressFill: { height: '100%', borderRadius: 999, backgroundColor: AuraColors.primary },
-  timeRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
-  time: { color: AuraColors.textMuted, fontSize: 12, fontVariant: ['tabular-nums'] },
   controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 26, marginTop: 27 },
   seekButton: {
     width: 54,
@@ -334,23 +290,20 @@ const styles = StyleSheet.create({
   mainControlText: { color: AuraColors.background, fontSize: 28, fontWeight: '900', marginLeft: 2 },
   bottomActions: {
     width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 13,
+    alignItems: 'flex-start',
     marginTop: 34,
   },
   addButton: {
-    width: 54,
-    height: 54,
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 18,
-    backgroundColor: AuraColors.primary,
+    borderRadius: 24,
+    backgroundColor: AuraColors.surfaceRaised,
+    borderColor: AuraColors.primary,
+    borderWidth: 1,
   },
-  addSymbol: { color: AuraColors.background, fontSize: 30, fontWeight: '800', lineHeight: 32 },
-  addStatus: { flex: 1 },
-  addTitle: { color: AuraColors.text, fontSize: 14, fontWeight: '800' },
-  addSubtitle: { color: AuraColors.textMuted, fontSize: 12, lineHeight: 17, marginTop: 3 },
+  addSymbol: { color: AuraColors.primary, fontSize: 27, fontWeight: '800', lineHeight: 29 },
   pressed: { opacity: 0.72, transform: [{ scale: 0.97 }] },
   disabled: { opacity: 0.45 },
   error: { color: AuraColors.danger, fontSize: 13, textAlign: 'center', marginTop: 18 },
