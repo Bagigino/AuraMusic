@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import socket
 import sys
@@ -48,7 +49,14 @@ class AuraYouTubeExtractionError(RuntimeError):
 def _redact_log_message(message: Any) -> str:
     """Keep diagnostics useful without logging media URLs or request secrets."""
     text = str(message).replace("\r", " ").strip()
-    text = _URL_PATTERN.sub(lambda match: urlsplit(match.group(0))._replace(query="").geturl(), text)
+
+    def redact_url(match: re.Match[str]) -> str:
+        try:
+            return urlsplit(match.group(0))._replace(query="", fragment="").geturl()
+        except ValueError:
+            return "https://<redacted-url>"
+
+    text = _URL_PATTERN.sub(redact_url, text)
     return _SENSITIVE_PATTERN.sub(r"\1=<redacted>", text)
 
 
@@ -108,12 +116,19 @@ def _nullable_string(value: Any) -> str | None:
 def _nullable_number(value: Any) -> int | float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     return value
 
 
 def _audio_format(format_info: Mapping[str, Any]) -> dict[str, Any] | None:
     audio_codec = _nullable_string(format_info.get("acodec"))
-    if format_info.get("vcodec") != "none" or audio_codec in (None, "none"):
+    format_id = _nullable_string(format_info.get("format_id"))
+    if (
+        format_info.get("vcodec") != "none"
+        or audio_codec in (None, "none")
+        or format_id is None
+    ):
         return None
 
     file_size = _nullable_number(format_info.get("filesize"))
@@ -121,7 +136,7 @@ def _audio_format(format_info: Mapping[str, Any]) -> dict[str, Any] | None:
         file_size = _nullable_number(format_info.get("filesize_approx"))
 
     return {
-        "formatId": str(format_info.get("format_id", "")),
+        "formatId": format_id,
         "ext": _nullable_string(format_info.get("ext")),
         "audioCodec": audio_codec,
         "bitrate": _nullable_number(format_info.get("abr")),
@@ -136,7 +151,11 @@ def _build_dto(info: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(raw_format, Mapping)
         if (audio_format := _audio_format(raw_format)) is not None
     ]
-    m4a_formats = [item for item in audio_formats if item["ext"] == "m4a"]
+    m4a_formats = [
+        item
+        for item in audio_formats
+        if isinstance(item["ext"], str) and item["ext"].lower() == "m4a"
+    ]
     preferred_m4a = max(
         m4a_formats,
         key=lambda item: (
@@ -170,19 +189,51 @@ def _build_dto(info: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _error_chain(error: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        chain.append(current)
+
+        cause = getattr(current, "cause", None)
+        if isinstance(cause, BaseException):
+            pending.append(cause)
+        exc_info = getattr(current, "exc_info", None)
+        if isinstance(exc_info, tuple) and len(exc_info) > 1:
+            nested = exc_info[1]
+            if isinstance(nested, BaseException):
+                pending.append(nested)
+    return chain
+
+
 def _classify_download_error(error: DownloadError) -> AuraYouTubeExtractionError:
     diagnostic = str(error).lower()
-    cause = error.exc_info[1] if error.exc_info else None
+    error_chain = _error_chain(error)
 
-    if isinstance(cause, (socket.timeout, TimeoutError)) or "timed out" in diagnostic:
+    if any(isinstance(item, (socket.timeout, TimeoutError)) for item in error_chain) or any(
+        term in diagnostic for term in ("timed out", "timeout")
+    ):
         return AuraYouTubeExtractionError(
             "NETWORK_TIMEOUT", "La richiesta a YouTube ha superato il timeout."
         )
-    if isinstance(cause, CertificateVerifyError):
+    if any(isinstance(item, CertificateVerifyError) for item in error_chain):
         return AuraYouTubeExtractionError(
             "TLS_ERROR", "La connessione HTTPS a YouTube non ha superato la verifica TLS."
         )
-    if isinstance(cause, (TransportError, RequestError)):
+    if any(isinstance(item, GeoRestrictedError) for item in error_chain):
+        return AuraYouTubeExtractionError(
+            "RESTRICTED_VIDEO", "Il video non è disponibile in questa area geografica."
+        )
+    if any(isinstance(item, UnsupportedError) for item in error_chain):
+        return AuraYouTubeExtractionError(
+            "UNSUPPORTED_URL", "yt-dlp non riconosce questo URL YouTube."
+        )
+    if any(isinstance(item, (TransportError, RequestError)) for item in error_chain):
         return AuraYouTubeExtractionError(
             "NETWORK_ERROR", "Impossibile contattare YouTube. Controlla la connessione."
         )
