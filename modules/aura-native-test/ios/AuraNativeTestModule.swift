@@ -159,7 +159,7 @@ public class AuraNativeTestModule: Module {
     // default, so the synchronous CPython/yt-dlp work never blocks iOS main.
     AsyncFunction("extractYouTubeInfo") { (url: String) throws -> AuraYouTubeVideoInfoResult in
       var pythonError: NSString?
-      guard let json = AuraExtractYouTubeInfo(url as NSString, &pythonError) else {
+      guard let json = AuraExtractYouTubeInfo(url, &pythonError) else {
         throw Exception(
           name: "NATIVE_BRIDGE_ERROR",
           description: pythonError.map { $0 as String }
