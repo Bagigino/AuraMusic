@@ -26,7 +26,7 @@ export function TrackList({
             accessibilityHint={
               track.missingLocalFile
                 ? 'Il file locale non è disponibile'
-                : 'Apre il Player e avvia il brano locale'
+                : 'Avvia il brano locale e mostra il Mini Player'
             }
             accessibilityRole="button"
             accessibilityState={{ disabled: track.missingLocalFile }}

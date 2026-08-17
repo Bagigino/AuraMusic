@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 
 import { useAppAudioPlayer } from '@/audio/audio-player-context';
-import { AuraButton } from '@/components/aura-button';
 import { AuraScreen } from '@/components/aura-screen';
 import { PlayerSeekBar } from '@/components/player-seek-bar';
 import { PlaylistPicker } from '@/components/playlist-picker';
@@ -34,6 +33,7 @@ export default function PlayerScreen() {
     currentItem,
     source,
     status,
+    duration,
     isResolving,
     playbackError,
     togglePlayback,
@@ -47,6 +47,12 @@ export default function PlayerScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [membershipCount, setMembershipCount] = useState(0);
+
+  useEffect(() => {
+    if (!currentItem) {
+      router.replace('/');
+    }
+  }, [currentItem, router]);
 
   const libraryTrack = currentItem
     ? tracks.find((track) => track.id === currentItem.id && !track.missingLocalFile) ?? null
@@ -79,21 +85,9 @@ export default function PlayerScreen() {
   }, [currentItem, getTrackPlaylistIds, tracks]);
 
   if (!currentItem) {
-    return (
-      <AuraScreen title="Player" subtitle="Il brano in riproduzione apparirà qui.">
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyIcon}>▶</Text>
-          <Text style={styles.emptyTitle}>Nessun brano selezionato</Text>
-          <Text style={styles.emptyText}>
-            Tocca un risultato Search oppure un brano della Library per iniziare l’ascolto.
-          </Text>
-          <AuraButton label="Apri Search" onPress={() => router.push('/search')} />
-        </View>
-      </AuraScreen>
-    );
+    return null;
   }
 
-  const duration = status.duration || currentItem.duration || 0;
   const buffering = isResolving || (!!source && !status.isLoaded) || status.isBuffering;
   const visiblePlaybackError = isResolving
     ? null
@@ -134,6 +128,19 @@ export default function PlayerScreen() {
           ? 'Riproduzione offline dal dispositivo.'
           : 'Streaming remoto. Il brano non viene salvato finché non premi +.'
       }>
+      <Pressable
+        accessibilityLabel="Chiudi Player completo"
+        accessibilityRole="button"
+        onPress={() => {
+          if (router.canGoBack()) {
+            router.back();
+          } else {
+            router.replace('/');
+          }
+        }}
+        style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
+        <Text style={styles.closeButtonText}>‹ Torna all’app</Text>
+      </Pressable>
       <View style={styles.player}>
         <View style={styles.artworkShadow}>
           <TrackArtwork size={260} thumbnail={currentItem.thumbnail ?? ''} />
@@ -176,6 +183,18 @@ export default function PlayerScreen() {
 
         <View style={styles.controls}>
           <Pressable
+            accessibilityLabel={membershipCount > 0 ? 'Gestisci playlist' : 'Aggiungi a playlist'}
+            accessibilityRole="button"
+            disabled={isSaving}
+            onPress={() => setPickerVisible(true)}
+            style={({ pressed }) => [
+              styles.addButton,
+              isSaving && styles.disabled,
+              pressed && styles.pressed,
+            ]}>
+            <Text style={styles.addSymbol}>{membershipCount > 0 ? '✓' : '+'}</Text>
+          </Pressable>
+          <Pressable
             accessibilityLabel="Indietro di 15 secondi"
             accessibilityRole="button"
             disabled={!status.isLoaded}
@@ -205,21 +224,6 @@ export default function PlayerScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.bottomActions}>
-          <Pressable
-            accessibilityLabel={membershipCount > 0 ? 'Gestisci playlist' : 'Aggiungi a playlist'}
-            accessibilityRole="button"
-            disabled={isSaving}
-            onPress={() => setPickerVisible(true)}
-            style={({ pressed }) => [
-              styles.addButton,
-              isSaving && styles.disabled,
-              pressed && styles.pressed,
-            ]}>
-            <Text style={styles.addSymbol}>{membershipCount > 0 ? '✓' : '+'}</Text>
-          </Pressable>
-        </View>
-
         {visiblePlaybackError && <Text style={styles.error}>{visiblePlaybackError}</Text>}
         {saveError && <Text style={styles.error}>{saveError}</Text>}
       </View>
@@ -237,6 +241,17 @@ export default function PlayerScreen() {
 }
 
 const styles = StyleSheet.create({
+  closeButton: {
+    alignSelf: 'flex-start',
+    marginBottom: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 16,
+    backgroundColor: AuraColors.surface,
+    borderColor: AuraColors.border,
+    borderWidth: 1,
+  },
+  closeButtonText: { color: AuraColors.text, fontSize: 13, fontWeight: '800' },
   player: { alignItems: 'center' },
   artworkShadow: {
     borderRadius: 64,
@@ -267,7 +282,14 @@ const styles = StyleSheet.create({
   remotePill: { backgroundColor: '#2B2144' },
   availabilityText: { color: AuraColors.success, fontSize: 9, fontWeight: '900', letterSpacing: 0.7 },
   remoteText: { color: AuraColors.primary },
-  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 26, marginTop: 27 },
+  controls: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    marginTop: 27,
+  },
   seekButton: {
     width: 54,
     height: 54,
@@ -288,11 +310,6 @@ const styles = StyleSheet.create({
     backgroundColor: AuraColors.primary,
   },
   mainControlText: { color: AuraColors.background, fontSize: 28, fontWeight: '900', marginLeft: 2 },
-  bottomActions: {
-    width: '100%',
-    alignItems: 'flex-start',
-    marginTop: 34,
-  },
   addButton: {
     width: 48,
     height: 48,
@@ -307,16 +324,4 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.72, transform: [{ scale: 0.97 }] },
   disabled: { opacity: 0.45 },
   error: { color: AuraColors.danger, fontSize: 13, textAlign: 'center', marginTop: 18 },
-  emptyCard: {
-    alignItems: 'center',
-    gap: 14,
-    padding: 28,
-    borderRadius: 26,
-    backgroundColor: AuraColors.surface,
-    borderColor: AuraColors.border,
-    borderWidth: 1,
-  },
-  emptyIcon: { color: AuraColors.primary, fontSize: 36, marginBottom: 4 },
-  emptyTitle: { color: AuraColors.text, fontSize: 20, fontWeight: '800', textAlign: 'center' },
-  emptyText: { color: AuraColors.textMuted, fontSize: 15, lineHeight: 22, textAlign: 'center', marginBottom: 8 },
 });

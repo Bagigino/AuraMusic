@@ -46,4 +46,13 @@ test('Player keeps the playlist action icon-only', async () => {
   assert.match(source, /membershipCount > 0 \? '✓' : '\+'/);
   assert.match(source, /onPress=\{\(\) => setPickerVisible\(true\)\}/);
   assert.match(source, /<PlaylistPicker/);
+  assert.doesNotMatch(source, /bottomActions/);
+
+  const controlsStart = source.indexOf('<View style={styles.controls}>');
+  const controlsEnd = source.indexOf('</View>', controlsStart);
+  const controls = source.slice(controlsStart, controlsEnd);
+  assert.match(controls, /setPickerVisible\(true\)/);
+  assert.match(controls, /Indietro di 15 secondi/);
+  assert.match(controls, /Riproduci/);
+  assert.match(controls, /Avanti di 15 secondi/);
 });

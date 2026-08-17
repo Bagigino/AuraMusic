@@ -25,6 +25,18 @@ const webModule: AuraNativeTestModuleApi = {
   async downloadYouTubeM4a() {
     return 'Native M4A download unavailable on web';
   },
+  async sha256File() {
+    throw new Error('AuraMusic backup unavailable on web');
+  },
+  async createBackupArchive() {
+    throw new Error('AuraMusic backup unavailable on web');
+  },
+  async inspectBackupArchive() {
+    throw new Error('AuraMusic restore unavailable on web');
+  },
+  async extractBackupArchive() {
+    throw new Error('AuraMusic restore unavailable on web');
+  },
   addListener() {
     return { remove() {} };
   },

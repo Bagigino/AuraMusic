@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  createSearchPlaybackQueue,
+  getNextQueueIndex,
+} from '../src/audio/playback-queue.ts';
+
+import {
   canRefreshRemotePlayback,
   normalizeRemotePlaybackSource,
   refreshRemotePlayerSource,
@@ -65,6 +70,52 @@ test('Library localUri is preferred and native resolution is skipped', async () 
     },
   );
   assert.deepEqual(source, { type: 'local', track: localTrack, uri: localTrack.localUri });
+});
+
+test('Next queue item resolves localUri when saved and remoteUri otherwise', async () => {
+  const nextResult = {
+    ...searchResult,
+    id: 'next-video',
+    title: 'Next song',
+    url: 'https://www.youtube.com/watch?v=next-video',
+  };
+  const queue = createSearchPlaybackQueue([searchResult, nextResult], searchResult.id);
+  const nextIndex = getNextQueueIndex(queue);
+  assert.notEqual(nextIndex, null);
+  const nextItem = queue.tracks[nextIndex];
+  const savedNext = {
+    ...localTrack,
+    id: nextResult.id,
+    title: nextResult.title,
+    sourceUrl: nextResult.url,
+    localUri: 'file:///documents/music/next-video.m4a',
+  };
+
+  const localSource = await resolvePlayerSource(nextItem, [savedNext], {
+    async resolveYouTubePlaybackSource() {
+      throw new Error('remote resolver must not run for the saved next Track');
+    },
+  });
+  assert.equal(localSource.type, 'local');
+  assert.equal(localSource.uri, savedNext.localUri);
+
+  const remoteSource = await resolvePlayerSource(nextItem, [], {
+    async resolveYouTubePlaybackSource(url) {
+      assert.equal(url, nextResult.url);
+      return {
+        videoId: nextResult.id,
+        title: nextResult.title,
+        artist: nextResult.uploader,
+        thumbnail: nextResult.thumbnail,
+        duration: nextResult.duration,
+        remoteUri: 'https://media.example/next-video.m4a',
+        formatId: '140',
+        ext: 'm4a',
+      };
+    },
+  });
+  assert.equal(remoteSource.type, 'remote');
+  assert.equal(remoteSource.uri, 'https://media.example/next-video.m4a');
 });
 
 test('a missing local file falls back to the remote source', async () => {

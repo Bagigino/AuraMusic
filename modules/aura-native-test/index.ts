@@ -1,5 +1,7 @@
 import AuraNativeTestModule from './src/AuraNativeTestModule';
 import type {
+  BackupArchiveEntry,
+  BackupFileDigest,
   DownloadedAudioResult,
   DownloadProgress,
   YouTubeExtractionErrorPayload,
@@ -11,6 +13,8 @@ import type {
 } from './src/AuraNativeTest.types';
 
 export type {
+  BackupArchiveEntry,
+  BackupFileDigest,
   DownloadedAudioResult,
   DownloadProgress,
   YouTubeAudioFormat,
@@ -21,6 +25,30 @@ export type {
   YtDlpAppleProviderResult,
   YtDlpImportResult,
 } from './src/AuraNativeTest.types';
+
+export async function sha256File(fileUri: string): Promise<BackupFileDigest> {
+  return AuraNativeTestModule.sha256File(fileUri);
+}
+
+export async function createBackupArchive(
+  sourceDirectoryUri: string,
+  archiveUri: string,
+): Promise<BackupArchiveEntry[]> {
+  return AuraNativeTestModule.createBackupArchive(sourceDirectoryUri, archiveUri);
+}
+
+export async function inspectBackupArchive(
+  archiveUri: string,
+): Promise<BackupArchiveEntry[]> {
+  return AuraNativeTestModule.inspectBackupArchive(archiveUri);
+}
+
+export async function extractBackupArchive(
+  archiveUri: string,
+  destinationDirectoryUri: string,
+): Promise<BackupArchiveEntry[]> {
+  return AuraNativeTestModule.extractBackupArchive(archiveUri, destinationDirectoryUri);
+}
 
 export class YouTubeExtractionError extends Error {
   readonly code: string;

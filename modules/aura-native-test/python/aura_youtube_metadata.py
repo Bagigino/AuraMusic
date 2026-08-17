@@ -48,6 +48,7 @@ _MAX_SEARCH_LIMIT = 20
 _MAX_SEARCH_QUERY_LENGTH = 200
 _MAX_DIAGNOSTIC_LOG_ENTRIES = 200
 _VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_FORMAT_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 _YOUTUBE_VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _URL_PATTERN = re.compile(r"https?://[^\s\]\[<>()\"']+", re.IGNORECASE)
 _SENSITIVE_PATTERN = re.compile(
@@ -254,12 +255,44 @@ def _audio_format(format_info: Mapping[str, Any]) -> dict[str, Any] | None:
 def _is_source_m4a_format(format_info: Mapping[str, Any]) -> bool:
     audio_codec = _nullable_string(format_info.get("acodec"))
     extension = _nullable_string(format_info.get("ext"))
+    protocol = (_nullable_string(format_info.get("protocol")) or "").lower()
+    media_url = _nullable_string(format_info.get("url"))
+    try:
+        media_scheme = urlsplit(media_url or "").scheme.lower()
+    except ValueError:
+        media_scheme = ""
     return (
         _nullable_string(format_info.get("format_id")) is not None
         and format_info.get("vcodec") == "none"
         and audio_codec not in (None, "none")
         and extension is not None
         and extension.lower() == "m4a"
+        # Without FFmpeg/fixup, persist only one direct HTTPS resource. HLS,
+        # DASH fragment lists and SABR can leave an M4A timeline with gaps that
+        # AVPlayer exposes as a long silent tail.
+        and protocol == "https"
+        and media_scheme == "https"
+    )
+
+
+def _file_size_is_plausible(
+    actual_size: int,
+    selected_format: Mapping[str, Any],
+) -> bool:
+    exact_size = _nullable_number(selected_format.get("filesize"))
+    if exact_size is not None and exact_size > 0:
+        tolerance = max(65_536, float(exact_size) * 0.05)
+        return abs(float(actual_size) - float(exact_size)) <= tolerance
+
+    approximate_size = _nullable_number(selected_format.get("filesize_approx"))
+    if approximate_size is None or approximate_size <= 0:
+        return actual_size > 0
+    # filesize_approx is bitrate-derived and deliberately receives a wider
+    # tolerance, while still rejecting half files and accidental duplication.
+    return (
+        float(approximate_size) * 0.60
+        <= float(actual_size)
+        <= float(approximate_size) * 1.40
     )
 
 
@@ -279,7 +312,9 @@ def _select_m4a_format(
 
     if requested_format_id is not None:
         normalized_format_id = requested_format_id.strip()
-        if not normalized_format_id:
+        if not normalized_format_id or not _FORMAT_ID_PATTERN.fullmatch(
+            normalized_format_id
+        ):
             raise AuraYouTubeExtractionError(
                 "INVALID_FORMAT_ID", "Il format ID M4A non e valido."
             )
@@ -430,9 +465,10 @@ def _build_dto(info: Mapping[str, Any]) -> dict[str, Any]:
         if (audio_format := _audio_format(raw_format)) is not None
     ]
     m4a_formats = [
-        item
-        for item in audio_formats
-        if isinstance(item["ext"], str) and item["ext"].lower() == "m4a"
+        audio_format
+        for raw_format in info.get("formats") or []
+        if isinstance(raw_format, Mapping) and _is_source_m4a_format(raw_format)
+        if (audio_format := _audio_format(raw_format)) is not None
     ]
     preferred_m4a = max(
         m4a_formats,
@@ -999,7 +1035,9 @@ def download_youtube_m4a_json(
                     "FILESYSTEM_ERROR", "Il percorso M4A esistente non e un file regolare."
                 )
             existing_size = os.path.getsize(output_path)
-            if existing_size > 0:
+            if existing_size > 0 and _file_size_is_plausible(
+                existing_size, selected_format
+            ):
                 download_succeeded = True
                 _remove_incomplete_files(destination, video_id, logger)
                 return _success_envelope(
@@ -1014,6 +1052,9 @@ def download_youtube_m4a_json(
                         "fileSize": existing_size,
                     }
                 )
+            logger.warning(
+                "Existing M4A failed size validation and will be downloaded again"
+            )
             os.remove(output_path)
 
         _remove_incomplete_files(destination, video_id, logger)
@@ -1032,7 +1073,10 @@ def download_youtube_m4a_json(
                 )
 
         download_options = {
-            "format": selected_format_id,
+            # Re-extraction can expose the same format ID over several
+            # protocols. Keep the actual download on the direct HTTPS variant
+            # selected above, which is playable by AVPlayer without FFmpeg.
+            "format": f"{selected_format_id}[protocol=https]",
             "noplaylist": True,
             "paths": {"home": destination},
             "outtmpl": {"default": "%(id)s.%(ext)s"},
@@ -1081,6 +1125,12 @@ def download_youtube_m4a_json(
         if file_size <= 0:
             raise AuraYouTubeExtractionError(
                 "FILESYSTEM_ERROR", "Il file M4A scaricato e vuoto."
+            )
+        if not _file_size_is_plausible(file_size, selected_format):
+            os.remove(output_path)
+            raise AuraYouTubeExtractionError(
+                "INVALID_MEDIA_FILE",
+                "Il file M4A scaricato risulta incompleto o duplicato.",
             )
 
         download_succeeded = True
@@ -1197,6 +1247,15 @@ def download_youtube_m4a_json(
             _remove_incomplete_files(
                 os.path.dirname(output_path), video_id, logger
             )
+            try:
+                if os.path.isfile(output_path) and not os.path.islink(output_path):
+                    os.remove(output_path)
+                    logger.debug("Removed unverified final M4A after download failure")
+            except OSError as cleanup_error:
+                logger.warning(
+                    "Unable to remove unverified final M4A: "
+                    f"{type(cleanup_error).__name__}"
+                )
 
 
 def extract_youtube_info_json(raw_url: str) -> str:

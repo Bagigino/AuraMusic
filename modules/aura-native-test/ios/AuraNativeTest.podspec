@@ -22,6 +22,6 @@ Pod::Spec.new do |s|
     'CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER' => 'NO',
   }
 
-  s.source_files = 'AuraNativeTestModule.swift', 'AuraPythonBridge.{h,m}'
+  s.source_files = '*.swift', 'AuraPythonBridge.{h,m}'
   s.public_header_files = 'AuraPythonBridge.h'
 end

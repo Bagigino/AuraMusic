@@ -60,8 +60,7 @@ export default function PlaylistScreen() {
     if (track.missingLocalFile) {
       return;
     }
-    await playTrack(track);
-    router.push('/player');
+    await playTrack(track, { tracks, source: 'playlist' });
   };
 
   const confirmRemoveFromPlaylist = (track: Track) => {
@@ -111,7 +110,9 @@ export default function PlaylistScreen() {
       ) : tracks.length === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>Playlist vuota</Text>
-          <Text style={styles.emptyText}>Apri un brano nel Player e usa + per aggiungerlo.</Text>
+          <Text style={styles.emptyText}>
+            Avvia un brano, apri il Player dal Mini Player e usa + per aggiungerlo.
+          </Text>
         </View>
       ) : (
         <TrackList

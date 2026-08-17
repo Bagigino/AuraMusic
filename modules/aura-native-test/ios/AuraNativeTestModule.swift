@@ -191,6 +191,44 @@ private struct AuraDownloadedAudioResult: Record {
   @Field var fileSize: Double?
 }
 
+private struct AuraBackupArchiveEntryResult: Record {
+  @Field var path: String = ""
+  @Field var size: Double = 0
+}
+
+private struct AuraBackupFileDigestResult: Record {
+  @Field var sha256: String = ""
+  @Field var size: Double = 0
+}
+
+private func makeBackupArchiveEntryResult(
+  from entry: AuraBackupArchiveEntryInfo
+) -> AuraBackupArchiveEntryResult {
+  var result = AuraBackupArchiveEntryResult()
+  result.path = entry.path
+  result.size = Double(entry.size)
+  return result
+}
+
+private func makeBackupArchiveException(_ error: Error) -> AuraNativeModuleException {
+  if let archiveError = error as? AuraBackupArchiveError {
+    return AuraNativeModuleException(
+      name: archiveError.code,
+      description: archiveError.message,
+      code: archiveError.code
+    )
+  }
+  let nsError = error as NSError
+  let code = nsError.code == NSFileWriteOutOfSpaceError ? "DISK_FULL" : "FILESYSTEM_ERROR"
+  return AuraNativeModuleException(
+    name: code,
+    description: code == "DISK_FULL"
+      ? "Spazio insufficiente per completare l'operazione."
+      : "Operazione backup filesystem non riuscita: \(nsError.localizedDescription)",
+    code: code
+  )
+}
+
 private func makeAudioFormatResult(
   from payload: AuraYouTubeAudioFormatPayload
 ) -> AuraYouTubeAudioFormatResult {
@@ -334,6 +372,52 @@ public class AuraNativeTestModule: Module {
 
     AsyncFunction("getNativeMessage") {
       return "Hello from native iOS"
+    }
+
+    AsyncFunction("sha256File") { (fileUri: String) throws -> AuraBackupFileDigestResult in
+      do {
+        let digest = try AuraBackupArchive.sha256(fileValue: fileUri)
+        var result = AuraBackupFileDigestResult()
+        result.sha256 = digest.sha256
+        result.size = Double(digest.size)
+        return result
+      } catch {
+        throw makeBackupArchiveException(error)
+      }
+    }
+
+    AsyncFunction("createBackupArchive") {
+      (sourceDirectoryUri: String, archiveUri: String) throws -> [AuraBackupArchiveEntryResult] in
+      do {
+        return try AuraBackupArchive.create(
+          sourceDirectoryValue: sourceDirectoryUri,
+          archiveValue: archiveUri
+        ).map(makeBackupArchiveEntryResult)
+      } catch {
+        throw makeBackupArchiveException(error)
+      }
+    }
+
+    AsyncFunction("inspectBackupArchive") {
+      (archiveUri: String) throws -> [AuraBackupArchiveEntryResult] in
+      do {
+        return try AuraBackupArchive.inspect(archiveValue: archiveUri)
+          .map(makeBackupArchiveEntryResult)
+      } catch {
+        throw makeBackupArchiveException(error)
+      }
+    }
+
+    AsyncFunction("extractBackupArchive") {
+      (archiveUri: String, destinationDirectoryUri: String) throws -> [AuraBackupArchiveEntryResult] in
+      do {
+        return try AuraBackupArchive.extract(
+          archiveValue: archiveUri,
+          destinationDirectoryValue: destinationDirectoryUri
+        ).map(makeBackupArchiveEntryResult)
+      } catch {
+        throw makeBackupArchiveException(error)
+      }
     }
 
     AsyncFunction("testPython") { () throws -> Int in

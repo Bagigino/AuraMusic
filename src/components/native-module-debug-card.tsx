@@ -1,4 +1,3 @@
-import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -40,7 +39,6 @@ function formatAudioFormat(format: YouTubeAudioFormat) {
 }
 
 export function NativeModuleDebugCard() {
-  const router = useRouter();
   const { playTrack } = useAppAudioPlayer();
   const [message, setMessage] = useState<string | null>(null);
   const [pythonMessage, setPythonMessage] = useState<string | null>(null);
@@ -205,13 +203,13 @@ export function NativeModuleDebugCard() {
     }
   };
 
-  const handlePlayDownloadedAudio = () => {
+  const handlePlayDownloadedAudio = async () => {
     if (!downloadedAudio) {
       return;
     }
 
     try {
-      playTrack({
+      await playTrack({
         id: `youtube-debug-${downloadedAudio.videoId}`,
         title: downloadedAudio.title,
         artist: youtubeInfo?.uploader ?? 'YouTube Debug',
@@ -222,7 +220,6 @@ export function NativeModuleDebugCard() {
         downloadedAt: new Date().toISOString(),
         missingLocalFile: false,
       });
-      router.push('/player');
     } catch (playbackError) {
       setError(getErrorMessage(playbackError));
     }

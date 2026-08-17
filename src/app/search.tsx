@@ -1,4 +1,3 @@
-import { useRouter } from 'expo-router';
 import { useReducer, useRef } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -45,7 +44,6 @@ function getSearchErrorMessage(error: unknown) {
 }
 
 export default function SearchScreen() {
-  const router = useRouter();
   const { tracks } = useTrackLibrary();
   const { playSearchResult } = useAppAudioPlayer();
   const [state, dispatch] = useReducer(
@@ -73,8 +71,7 @@ export default function SearchScreen() {
   };
 
   const selectResult = (result: YouTubeSearchResult) => {
-    playSearchResult(result, tracks);
-    router.push('/player');
+    playSearchResult(result, state.results);
   };
 
   return (
@@ -133,7 +130,7 @@ export default function SearchScreen() {
             const isInLibrary = isSearchResultInLibrary(result, tracks);
             return (
               <Pressable
-                accessibilityHint="Apre il Player senza scaricare il brano"
+                accessibilityHint="Avvia lo streaming e mostra il Mini Player"
                 accessibilityRole="button"
                 key={result.id}
                 onPress={() => selectResult(result)}

@@ -23,8 +23,7 @@ export default function AllSongsScreen() {
     if (track.missingLocalFile) {
       return;
     }
-    await playTrack(track);
-    router.push('/player');
+    await playTrack(track, { tracks: allSongs, source: 'all-songs' });
   };
 
   const confirmRemoveTrack = (track: Track) => {

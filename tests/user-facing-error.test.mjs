@@ -18,6 +18,13 @@ test('maps native download codes without exposing the Expo exception stack', () 
   );
 });
 
+test('maps an incomplete or duplicated M4A to a retryable message', () => {
+  assert.equal(
+    getUserFacingError(Object.assign(new Error('native details'), { code: 'INVALID_MEDIA_FILE' })),
+    'Il file M4A scaricato risulta incompleto. Riprova il download.',
+  );
+});
+
 test('keeps a useful message for unknown non-native errors', () => {
   assert.equal(getUserFacingError(new Error('SQLite unavailable')), 'SQLite unavailable');
 });

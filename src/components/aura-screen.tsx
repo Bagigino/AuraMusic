@@ -1,7 +1,11 @@
 import type { PropsWithChildren } from 'react';
+import { usePathname } from 'expo-router';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useAppAudioPlayer } from '@/audio/audio-player-context';
+import { shouldShowMiniPlayer } from '@/audio/playback-queue';
+import { getScreenBottomPadding } from '@/components/player-layout-metrics';
 import { AuraColors } from '@/constants/aura-theme';
 
 type AuraScreenProps = PropsWithChildren<{
@@ -10,10 +14,25 @@ type AuraScreenProps = PropsWithChildren<{
 }>;
 
 export function AuraScreen({ title, subtitle, children }: AuraScreenProps) {
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+  const { currentItem } = useAppAudioPlayer();
+  const isFullPlayerRoute = pathname === '/player';
+  const miniPlayerVisible = shouldShowMiniPlayer(currentItem, isFullPlayerRoute);
+
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingBottom: getScreenBottomPadding(
+              insets.bottom,
+              miniPlayerVisible,
+              isFullPlayerRoute,
+            ),
+          },
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
@@ -36,7 +55,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: 22,
     paddingTop: 22,
-    paddingBottom: 120,
   },
   header: {
     marginBottom: 28,

@@ -79,6 +79,16 @@ export type DownloadedAudioResult = {
   fileSize: number | null;
 };
 
+export type BackupArchiveEntry = {
+  path: string;
+  size: number;
+};
+
+export type BackupFileDigest = {
+  sha256: string;
+  size: number;
+};
+
 export type AuraNativeTestModuleApi = {
   getNativeMessage(): Promise<string>;
   testPython(): Promise<number | string>;
@@ -91,6 +101,16 @@ export type AuraNativeTestModuleApi = {
     url: string,
     formatId?: string,
   ): Promise<DownloadedAudioResult | string>;
+  sha256File(fileUri: string): Promise<BackupFileDigest>;
+  createBackupArchive(
+    sourceDirectoryUri: string,
+    archiveUri: string,
+  ): Promise<BackupArchiveEntry[]>;
+  inspectBackupArchive(archiveUri: string): Promise<BackupArchiveEntry[]>;
+  extractBackupArchive(
+    archiveUri: string,
+    destinationDirectoryUri: string,
+  ): Promise<BackupArchiveEntry[]>;
   addListener(
     eventName: 'onDownloadProgress',
     listener: (event: DownloadProgress) => void,

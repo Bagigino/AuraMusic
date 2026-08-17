@@ -45,6 +45,26 @@ const unavailableModule: AuraNativeTestModuleApi = {
       'Il download M4A nativo non e incluso in questo client. Installa una development build iOS.',
     );
   },
+  async sha256File() {
+    throw new Error(
+      'Il supporto backup nativo non e incluso in questo client. Installa una development build iOS.',
+    );
+  },
+  async createBackupArchive() {
+    throw new Error(
+      'Il supporto backup nativo non e incluso in questo client. Installa una development build iOS.',
+    );
+  },
+  async inspectBackupArchive() {
+    throw new Error(
+      'Il supporto backup nativo non e incluso in questo client. Installa una development build iOS.',
+    );
+  },
+  async extractBackupArchive() {
+    throw new Error(
+      'Il supporto backup nativo non e incluso in questo client. Installa una development build iOS.',
+    );
+  },
   addListener() {
     return { remove() {} };
   },
