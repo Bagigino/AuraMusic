@@ -1,4 +1,4 @@
-"""YouTube metadata and direct-source M4A POCs for AuraMusic's embedded CPython."""
+"""YouTube search, metadata, and direct M4A support for embedded CPython."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import re
 import socket
 import sys
 import traceback
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -36,8 +36,12 @@ _ALLOWED_HOSTS = frozenset(
     {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 )
 _NETWORK_TIMEOUT_SECONDS = 25
+_DEFAULT_SEARCH_LIMIT = 10
+_MAX_SEARCH_LIMIT = 20
+_MAX_SEARCH_QUERY_LENGTH = 200
 _MAX_DIAGNOSTIC_LOG_ENTRIES = 200
 _VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_YOUTUBE_VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _URL_PATTERN = re.compile(r"https?://[^\s\]\[<>()\"']+", re.IGNORECASE)
 _SENSITIVE_PATTERN = re.compile(
     r"(?im)\b(authorization|cookie|set-cookie|x-goog-visitor-id|signature|sig|token)"
@@ -119,6 +123,30 @@ def _validate_url(raw_url: str) -> str:
     return url
 
 
+def _validate_search_query(raw_query: str) -> str:
+    if not isinstance(raw_query, str):
+        raise AuraYouTubeExtractionError(
+            "INVALID_SEARCH_QUERY", "Inserisci una ricerca YouTube valida."
+        )
+    query = " ".join(raw_query.split())
+    if not query:
+        raise AuraYouTubeExtractionError(
+            "EMPTY_SEARCH_QUERY", "Inserisci almeno un termine da cercare."
+        )
+    if len(query) > _MAX_SEARCH_QUERY_LENGTH:
+        raise AuraYouTubeExtractionError(
+            "SEARCH_QUERY_TOO_LONG",
+            f"La ricerca non puo superare {_MAX_SEARCH_QUERY_LENGTH} caratteri.",
+        )
+    return query
+
+
+def _normalize_search_limit(raw_limit: Any) -> int:
+    if isinstance(raw_limit, bool) or not isinstance(raw_limit, int):
+        return _DEFAULT_SEARCH_LIMIT
+    return min(_MAX_SEARCH_LIMIT, max(1, raw_limit))
+
+
 def _nullable_string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
@@ -129,6 +157,65 @@ def _nullable_number(value: Any) -> int | float | None:
     if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
+
+
+def _search_thumbnail(entry: Mapping[str, Any]) -> str | None:
+    thumbnail = _nullable_string(entry.get("thumbnail"))
+    if thumbnail is not None:
+        return thumbnail
+
+    thumbnails = entry.get("thumbnails")
+    if not isinstance(thumbnails, Iterable) or isinstance(thumbnails, (str, bytes)):
+        return None
+    candidates = [
+        url
+        for item in thumbnails
+        if isinstance(item, Mapping)
+        if (url := _nullable_string(item.get("url"))) is not None
+    ]
+    return candidates[-1] if candidates else None
+
+
+def _search_result(entry: Any) -> dict[str, Any] | None:
+    if not isinstance(entry, Mapping):
+        return None
+
+    entry_type = (_nullable_string(entry.get("_type")) or "video").lower()
+    extractor_name = " ".join(
+        value.lower()
+        for value in (
+            _nullable_string(entry.get("ie_key")),
+            _nullable_string(entry.get("extractor_key")),
+        )
+        if value is not None
+    )
+    if entry_type not in ("url", "video") or any(
+        blocked in extractor_name for blocked in ("channel", "playlist", "tab")
+    ):
+        return None
+
+    video_id = _nullable_string(entry.get("id"))
+    title = _nullable_string(entry.get("title"))
+    if (
+        video_id is None
+        or not _YOUTUBE_VIDEO_ID_PATTERN.fullmatch(video_id)
+        or title is None
+    ):
+        return None
+
+    duration = _nullable_number(entry.get("duration"))
+    if duration is not None and duration < 0:
+        duration = None
+
+    return {
+        "id": video_id,
+        "title": title,
+        "uploader": _nullable_string(entry.get("uploader"))
+        or _nullable_string(entry.get("channel")),
+        "duration": duration,
+        "thumbnail": _search_thumbnail(entry),
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+    }
 
 
 def _audio_format(format_info: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -364,12 +451,127 @@ def _error_envelope(error: AuraYouTubeExtractionError) -> str:
     )
 
 
-def _success_envelope(data: Mapping[str, Any]) -> str:
+def _success_envelope(data: Any) -> str:
     return json.dumps(
         {"ok": True, "data": data},
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+def search_youtube_json(
+    raw_query: str,
+    requested_limit: int = _DEFAULT_SEARCH_LIMIT,
+) -> str:
+    """Return flat normal-video search results without downloading media."""
+    logger = AuraYtDlpLogger()
+
+    try:
+        query = _validate_search_query(raw_query)
+        limit = _normalize_search_limit(requested_limit)
+        provider = test_apple_webkit_provider()
+        logger.debug(
+            "Apple WebKit JS Challenge Provider ready for search: "
+            f"{provider['provider']} {provider['version']}"
+        )
+
+        options = {
+            "quiet": True,
+            "verbose": True,
+            "skip_download": True,
+            "simulate": True,
+            "extract_flat": "in_playlist",
+            "noplaylist": True,
+            "playlistend": limit,
+            "socket_timeout": _NETWORK_TIMEOUT_SECONDS,
+            "retries": 1,
+            "extractor_retries": 1,
+            "fragment_retries": 0,
+            "cachedir": False,
+            "writethumbnail": False,
+            "writeinfojson": False,
+            "writesubtitles": False,
+            "writeautomaticsub": False,
+            "logger": logger,
+        }
+        search_expression = f"ytsearch{limit}:{query}"
+        with YoutubeDL(options) as ydl:
+            extracted_info = ydl.extract_info(search_expression, download=False)
+
+        if not isinstance(extracted_info, Mapping):
+            raise AuraYouTubeExtractionError(
+                "INVALID_SEARCH_RESPONSE",
+                "yt-dlp non ha restituito una risposta di ricerca valida.",
+            )
+        entries = extracted_info.get("entries")
+        if not isinstance(entries, Iterable) or isinstance(entries, (str, bytes)):
+            raise AuraYouTubeExtractionError(
+                "INVALID_SEARCH_RESPONSE",
+                "yt-dlp non ha restituito una lista di risultati valida.",
+            )
+
+        results: list[dict[str, Any]] = []
+        for entry in entries:
+            result = _search_result(entry)
+            if result is not None:
+                results.append(result)
+            if len(results) >= limit:
+                break
+
+        logger.debug(
+            f"Search completed with {len(results)} normal video result(s)"
+        )
+        return _success_envelope(results)
+    except AuraYouTubeExtractionError as error:
+        logger.error(f"{error.code}: {error.message}")
+        return _error_envelope(error)
+    except AuraYtDlpAppleProviderError as error:
+        logger.error(f"APPLE_PROVIDER_UNAVAILABLE: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "APPLE_PROVIDER_UNAVAILABLE",
+                "Il provider Apple WebKit non e disponibile nel runtime iOS.",
+            )
+        )
+    except DownloadError as error:
+        classified_error = _classify_download_error(error)
+        logger.error(f"{classified_error.code}: {error}")
+        return _error_envelope(classified_error)
+    except (socket.timeout, TimeoutError) as error:
+        logger.error(f"NETWORK_TIMEOUT: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "NETWORK_TIMEOUT", "La ricerca YouTube ha superato il timeout."
+            )
+        )
+    except CertificateVerifyError as error:
+        logger.error(f"TLS_ERROR: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "TLS_ERROR",
+                "La connessione HTTPS a YouTube non ha superato la verifica TLS.",
+            )
+        )
+    except (TransportError, RequestError) as error:
+        logger.error(f"NETWORK_ERROR: {error}")
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "NETWORK_ERROR", "Impossibile contattare YouTube. Controlla la connessione."
+            )
+        )
+    except BaseException as error:
+        logger.error(f"PYTHON_ERROR: {type(error).__name__}: {error}")
+        print(
+            "AuraMusic YouTube search traceback:\n"
+            + _redact_log_message(traceback.format_exc()),
+            file=sys.stderr,
+            flush=True,
+        )
+        return _error_envelope(
+            AuraYouTubeExtractionError(
+                "PYTHON_ERROR", "Errore Python inatteso durante la ricerca YouTube."
+            )
+        )
 
 
 def _validate_destination_directory(raw_path: str) -> str:

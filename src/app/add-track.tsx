@@ -1,5 +1,5 @@
-import { useRouter } from 'expo-router';
-import { useReducer } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AuraButton } from '@/components/aura-button';
@@ -69,12 +69,17 @@ function getProgressText(progress: DownloadProgress | null) {
 
 export default function AddTrackScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ sourceUrl?: string | string[] }>();
   const { analyzeTrack, addTrack } = useTrackLibrary();
+  const selectedSourceUrl = Array.isArray(params.sourceUrl)
+    ? params.sourceUrl[0]?.trim()
+    : params.sourceUrl?.trim();
   const [state, dispatch] = useReducer(
     downloadFlowReducer,
-    Platform.OS === 'web' ? TEST_TRACK_SOURCE_URL : '',
+    selectedSourceUrl || (Platform.OS === 'web' ? TEST_TRACK_SOURCE_URL : ''),
     createInitialDownloadFlowState,
   );
+  const lastAutoAnalyzedUrl = useRef<string | null>(null);
 
   const isBusy = ['analyzing', 'downloading', 'saving'].includes(state.status);
   const canDownload =
@@ -82,10 +87,10 @@ export default function AddTrackScreen() {
     state.info?.hasM4aAudio === true &&
     !state.duplicate;
 
-  const handleAnalyze = async () => {
+  const runAnalyze = useCallback(async (sourceUrl: string) => {
     dispatch({ type: 'ANALYZE_STARTED' });
     try {
-      const result = await analyzeTrack(state.sourceUrl.trim());
+      const result = await analyzeTrack(sourceUrl);
       dispatch({
         type: 'ANALYZE_SUCCEEDED',
         info: result.info,
@@ -95,6 +100,19 @@ export default function AddTrackScreen() {
     } catch (analysisError) {
       dispatch({ type: 'FAILED', message: getUserFacingError(analysisError) });
     }
+  }, [analyzeTrack]);
+
+  useEffect(() => {
+    if (!selectedSourceUrl || lastAutoAnalyzedUrl.current === selectedSourceUrl) {
+      return;
+    }
+    lastAutoAnalyzedUrl.current = selectedSourceUrl;
+    dispatch({ type: 'URL_CHANGED', sourceUrl: selectedSourceUrl });
+    void runAnalyze(selectedSourceUrl);
+  }, [runAnalyze, selectedSourceUrl]);
+
+  const handleAnalyze = async () => {
+    await runAnalyze(state.sourceUrl.trim());
   };
 
   const handleDownload = async () => {

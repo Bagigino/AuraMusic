@@ -3,6 +3,7 @@ import type {
   DownloadedAudioResult,
   DownloadProgress,
   YouTubeExtractionErrorPayload,
+  YouTubeSearchResult,
   YouTubeVideoInfo,
   YtDlpAppleProviderResult,
   YtDlpImportResult,
@@ -13,6 +14,7 @@ export type {
   DownloadProgress,
   YouTubeAudioFormat,
   YouTubeExtractionErrorPayload,
+  YouTubeSearchResult,
   YouTubeVideoInfo,
   YtDlpAppleProviderResult,
   YtDlpImportResult,
@@ -34,6 +36,16 @@ export class YouTubeDownloadError extends Error {
   constructor({ code, message }: YouTubeExtractionErrorPayload) {
     super(message);
     this.name = 'YouTubeDownloadError';
+    this.code = code;
+  }
+}
+
+export class YouTubeSearchError extends Error {
+  readonly code: string;
+
+  constructor({ code, message }: YouTubeExtractionErrorPayload) {
+    super(message);
+    this.name = 'YouTubeSearchError';
     this.code = code;
   }
 }
@@ -60,6 +72,17 @@ function toDownloadError(error: unknown): YouTubeDownloadError {
   });
 }
 
+function toSearchError(error: unknown): YouTubeSearchError {
+  const nativeError = error as { code?: unknown; message?: unknown };
+  return new YouTubeSearchError({
+    code: typeof nativeError?.code === 'string' ? nativeError.code : 'NATIVE_ERROR',
+    message:
+      typeof nativeError?.message === 'string'
+        ? nativeError.message
+        : 'Errore sconosciuto durante la ricerca YouTube.',
+  });
+}
+
 export async function getNativeMessage(): Promise<string> {
   return AuraNativeTestModule.getNativeMessage();
 }
@@ -74,6 +97,17 @@ export async function testYtDlpImport(): Promise<YtDlpImportResult | string> {
 
 export async function testYtDlpAppleProvider(): Promise<YtDlpAppleProviderResult | string> {
   return AuraNativeTestModule.testYtDlpAppleProvider();
+}
+
+export async function searchYouTube(
+  query: string,
+  limit?: number,
+): Promise<YouTubeSearchResult[] | string> {
+  try {
+    return await AuraNativeTestModule.searchYouTube(query, limit);
+  } catch (error) {
+    throw toSearchError(error);
+  }
 }
 
 export async function extractYouTubeInfo(url: string): Promise<YouTubeVideoInfo | string> {

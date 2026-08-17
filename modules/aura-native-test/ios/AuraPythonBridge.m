@@ -524,6 +524,111 @@ NSString * _Nullable AuraExtractYouTubeInfo(
   return result;
 }
 
+NSString * _Nullable AuraSearchYouTube(
+  NSString *query,
+  NSInteger limit,
+  NSString * _Nullable * _Nullable errorMessage
+) {
+  dispatch_once(&AuraPythonInitializationOnce, ^{
+    AuraInitializePython();
+  });
+
+  if (AuraPythonInitializationError != nil || !Py_IsInitialized()) {
+    AuraAssignError(errorMessage, AuraPythonInitializationError ?: @"CPython non è inizializzato.");
+    return nil;
+  }
+
+  PyGILState_STATE gilState = PyGILState_Ensure();
+  PyObject *module = PyImport_ImportModule("aura_youtube_metadata");
+  if (module == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Import del modulo ricerca YouTube fallito: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  PyObject *function = PyObject_GetAttrString(module, "search_youtube_json");
+  if (function == NULL || !PyCallable_Check(function)) {
+    NSString *detail = PyErr_Occurred()
+      ? AuraCurrentPythonException()
+      : @"search_youtube_json non è callable.";
+    Py_XDECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, [NSString stringWithFormat:
+      @"Funzione ricerca YouTube non valida: %@", detail]);
+    return nil;
+  }
+
+  PyObject *pythonQuery = AuraPythonUnicodeFromString(query);
+  PyObject *pythonLimit = PyLong_FromLongLong((long long)limit);
+  if (pythonQuery == NULL || pythonLimit == NULL) {
+    NSString *detail = PyErr_Occurred()
+      ? AuraCurrentPythonException()
+      : @"Impossibile preparare gli argomenti di ricerca.";
+    Py_XDECREF(pythonLimit);
+    Py_XDECREF(pythonQuery);
+    Py_DECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, [NSString stringWithFormat:
+      @"Preparazione ricerca YouTube fallita: %@", detail]);
+    return nil;
+  }
+
+  PyObject *arguments = PyTuple_Pack(2, pythonQuery, pythonLimit);
+  Py_DECREF(pythonLimit);
+  Py_DECREF(pythonQuery);
+  if (arguments == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Preparazione argomenti ricerca fallita: %@", AuraCurrentPythonException()];
+    Py_DECREF(function);
+    Py_DECREF(module);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  PyObject *pythonResult = PyObject_CallObject(function, arguments);
+  Py_DECREF(arguments);
+  Py_DECREF(function);
+  Py_DECREF(module);
+  if (pythonResult == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Ricerca YouTube fallita: %@", AuraCurrentPythonException()];
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  if (!PyUnicode_Check(pythonResult)) {
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, @"Il risultato ricerca YouTube non è una stringa JSON.");
+    return nil;
+  }
+
+  const char *resultUTF8 = PyUnicode_AsUTF8(pythonResult);
+  if (resultUTF8 == NULL) {
+    NSString *message = [NSString stringWithFormat:
+      @"Lettura del JSON ricerca YouTube fallita: %@", AuraCurrentPythonException()];
+    Py_DECREF(pythonResult);
+    PyGILState_Release(gilState);
+    AuraAssignError(errorMessage, message);
+    return nil;
+  }
+
+  NSString *result = [NSString stringWithUTF8String:resultUTF8];
+  Py_DECREF(pythonResult);
+  PyGILState_Release(gilState);
+  if (result == nil) {
+    AuraAssignError(errorMessage, @"Il JSON ricerca YouTube non è UTF-8 valido.");
+    return nil;
+  }
+  return result;
+}
+
 NSString * _Nullable AuraDownloadYouTubeM4a(
   NSString *url,
   NSString * _Nullable formatId,

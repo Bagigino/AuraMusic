@@ -371,9 +371,27 @@ jobs:
             exit 1
           }
 
+          grep -Fq 'def search_youtube_json' \
+            modules/aura-native-test/python/aura_youtube_metadata.py || {
+            echo "::error title=YouTube search missing::The embedded Python search entry point was not found."
+            exit 1
+          }
+
+          grep -Fq 'FOUNDATION_EXPORT NSString * _Nullable AuraSearchYouTube' \
+            modules/aura-native-test/ios/AuraPythonBridge.h || {
+            echo "::error title=YouTube search bridge missing::AuraSearchYouTube was not found."
+            exit 1
+          }
+
           grep -Fq 'AsyncFunction("downloadYouTubeM4a")' \
             modules/aura-native-test/ios/AuraNativeTestModule.swift || {
             echo "::error title=YouTube M4A native API missing::downloadYouTubeM4a was not found in AuraNativeTestModule."
+            exit 1
+          }
+
+          grep -Fq 'AsyncFunction("searchYouTube")' \
+            modules/aura-native-test/ios/AuraNativeTestModule.swift || {
+            echo "::error title=YouTube search native API missing::searchYouTube was not found in AuraNativeTestModule."
             exit 1
           }
 
@@ -581,6 +599,12 @@ jobs:
           grep -Fq 'def download_youtube_m4a_json' \
             "$APP_PATH/app/aura_youtube_metadata.py" || {
             echo "::error title=YouTube M4A POC missing::The Python download entry point is missing from the app bundle."
+            exit 1
+          }
+
+          grep -Fq 'def search_youtube_json' \
+            "$APP_PATH/app/aura_youtube_metadata.py" || {
+            echo "::error title=YouTube search missing::The Python search entry point is missing from the app bundle."
             exit 1
           }
 

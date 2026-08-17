@@ -18,6 +18,11 @@ FOUNDATION_EXPORT NSString * _Nullable AuraExtractYouTubeInfo(
   NSString *url,
   NSString * _Nullable * _Nullable errorMessage
 );
+FOUNDATION_EXPORT NSString * _Nullable AuraSearchYouTube(
+  NSString *query,
+  NSInteger limit,
+  NSString * _Nullable * _Nullable errorMessage
+);
 FOUNDATION_EXPORT NSString * _Nullable AuraDownloadYouTubeM4a(
   NSString *url,
   NSString * _Nullable formatId,

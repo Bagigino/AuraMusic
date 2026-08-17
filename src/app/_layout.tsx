@@ -61,6 +61,15 @@ export default function TabLayout() {
                 }}
               />
               <Tabs.Screen
+                name="search"
+                options={{
+                  title: 'Search',
+                  tabBarIcon: ({ color, focused }) => (
+                    <TabIcon color={color} focused={focused} symbol="⌕" />
+                  ),
+                }}
+              />
+              <Tabs.Screen
                 name="player"
                 options={{
                   title: 'Player',
@@ -69,15 +78,7 @@ export default function TabLayout() {
                   ),
                 }}
               />
-              <Tabs.Screen
-                name="add-track"
-                options={{
-                  title: 'Add Track',
-                  tabBarIcon: ({ color, focused }) => (
-                    <TabIcon color={color} focused={focused} symbol="＋" />
-                  ),
-                }}
-              />
+              <Tabs.Screen name="add-track" options={{ href: null }} />
             </Tabs>
           </AudioPlayerProvider>
         </TrackLibraryProvider>

@@ -51,6 +51,21 @@ private struct AuraYouTubeEnvelope: Decodable {
   let error: AuraYouTubeErrorPayload?
 }
 
+private struct AuraYouTubeSearchResultPayload: Decodable {
+  let id: String
+  let title: String
+  let uploader: String?
+  let duration: Double?
+  let thumbnail: String?
+  let url: String
+}
+
+private struct AuraYouTubeSearchEnvelope: Decodable {
+  let ok: Bool
+  let data: [AuraYouTubeSearchResultPayload]?
+  let error: AuraYouTubeErrorPayload?
+}
+
 private struct AuraDownloadedAudioPayload: Decodable {
   let success: Bool
   let alreadyExists: Bool?
@@ -98,6 +113,15 @@ private struct AuraYouTubeVideoInfoResult: Record {
   @Field var preferredM4aFormatId: String?
 }
 
+private struct AuraYouTubeSearchResult: Record {
+  @Field var id: String = ""
+  @Field var title: String = ""
+  @Field var uploader: String?
+  @Field var duration: Double?
+  @Field var thumbnail: String?
+  @Field var url: String = ""
+}
+
 private struct AuraDownloadedAudioResult: Record {
   @Field var success: Bool = true
   @Field var alreadyExists: Bool = false
@@ -135,6 +159,19 @@ private func makeVideoInfoResult(
   result.audioFormats = payload.audioFormats.map(makeAudioFormatResult)
   result.hasM4aAudio = payload.hasM4aAudio
   result.preferredM4aFormatId = payload.preferredM4aFormatId
+  return result
+}
+
+private func makeSearchResult(
+  from payload: AuraYouTubeSearchResultPayload
+) -> AuraYouTubeSearchResult {
+  var result = AuraYouTubeSearchResult()
+  result.id = payload.id
+  result.title = payload.title
+  result.uploader = payload.uploader
+  result.duration = payload.duration
+  result.thumbnail = payload.thumbnail
+  result.url = payload.url
   return result
 }
 
@@ -276,6 +313,46 @@ public class AuraNativeTestModule: Module {
 
     // Expo runs AsyncFunction bodies on its user-initiated worker queue by
     // default, so the synchronous CPython/yt-dlp work never blocks iOS main.
+    AsyncFunction("searchYouTube") {
+      (query: String, limit: Int?) throws -> [AuraYouTubeSearchResult] in
+      let resolvedLimit = min(max(limit ?? 10, 1), 20)
+      var pythonError: NSString?
+      guard let json = AuraSearchYouTube(query, resolvedLimit, &pythonError) else {
+        throw Exception(
+          name: "NATIVE_BRIDGE_ERROR",
+          description: pythonError.map { $0 as String }
+            ?? "Ricerca YouTube fallita senza dettagli.",
+          code: "NATIVE_BRIDGE_ERROR"
+        )
+      }
+
+      let envelope: AuraYouTubeSearchEnvelope
+      do {
+        envelope = try JSONDecoder().decode(
+          AuraYouTubeSearchEnvelope.self,
+          from: Data((json as String).utf8)
+        )
+      } catch {
+        throw Exception(
+          name: "INVALID_NATIVE_RESPONSE",
+          description: "Il bridge Python ha restituito risultati di ricerca non validi.",
+          code: "INVALID_NATIVE_RESPONSE"
+        )
+      }
+
+      if envelope.ok, let payload = envelope.data {
+        return payload.map(makeSearchResult)
+      }
+
+      let searchError = envelope.error
+      throw Exception(
+        name: searchError?.code ?? "SEARCH_ERROR",
+        description: searchError?.message
+          ?? "Ricerca YouTube fallita senza dettagli.",
+        code: searchError?.code ?? "SEARCH_ERROR"
+      )
+    }
+
     AsyncFunction("extractYouTubeInfo") { (url: String) throws -> AuraYouTubeVideoInfoResult in
       var pythonError: NSString?
       guard let json = AuraExtractYouTubeInfo(url, &pythonError) else {

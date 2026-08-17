@@ -31,6 +31,15 @@ export type YouTubeVideoInfo = {
   preferredM4aFormatId: string | null;
 };
 
+export type YouTubeSearchResult = {
+  id: string;
+  title: string;
+  uploader: string | null;
+  duration: number | null;
+  thumbnail: string | null;
+  url: string;
+};
+
 export type YouTubeExtractionErrorPayload = {
   code: string;
   message: string;
@@ -63,6 +72,7 @@ export type AuraNativeTestModuleApi = {
   testPython(): Promise<number | string>;
   testYtDlpImport(): Promise<YtDlpImportResult | string>;
   testYtDlpAppleProvider(): Promise<YtDlpAppleProviderResult | string>;
+  searchYouTube(query: string, limit?: number): Promise<YouTubeSearchResult[] | string>;
   extractYouTubeInfo(url: string): Promise<YouTubeVideoInfo | string>;
   downloadYouTubeM4a(
     url: string,

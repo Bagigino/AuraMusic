@@ -13,6 +13,10 @@ Add Track UI
   -> Swift / embedded CPython / yt-dlp / Apple WebKit provider
 ```
 
+YouTube text search is a separate `YouTubeSearchService`; selecting a result only
+passes its normalized watch URL to this existing Analyze flow. Search never calls
+the download service directly.
+
 Metro selects `app-download-service.ios.ts` for an iOS native build and the mock
 implementation for web and other platforms. The main UI does not import the Expo
 native module. The separate Debug card is intentionally retained for diagnostics.
