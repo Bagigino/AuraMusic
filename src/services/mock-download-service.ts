@@ -10,13 +10,14 @@ import {
 } from '@/constants/test-track';
 import type { Track } from '@/models/track';
 import type {
+  DownloadInfo,
   DownloadProgressCallback,
   DownloadService,
-  TrackInfo,
 } from '@/services/download-service';
+import { deleteManagedAudioFile } from '@/storage/music-file-storage';
 
 type MockTrackEntry = {
-  info: TrackInfo;
+  info: DownloadInfo;
   bundledAsset: number;
   fileName: string;
 };
@@ -40,7 +41,7 @@ function getMockEntry(url: string): MockTrackEntry {
 }
 
 export class MockDownloadService implements DownloadService {
-  async getInfo(url: string): Promise<TrackInfo> {
+  async getInfo(url: string): Promise<DownloadInfo> {
     return { ...getMockEntry(url).info };
   }
 
@@ -51,7 +52,15 @@ export class MockDownloadService implements DownloadService {
     const entry = getMockEntry(url);
     const info = await this.getInfo(url);
 
-    onProgress?.(0);
+    onProgress?.({
+      status: 'preparing',
+      downloadedBytes: null,
+      totalBytes: null,
+      totalBytesEstimate: null,
+      speed: null,
+      eta: null,
+      progress: 0,
+    });
 
     const bundledAsset = await Asset.fromModule(entry.bundledAsset).downloadAsync();
     const bundledUri = bundledAsset.localUri ?? bundledAsset.uri;
@@ -61,7 +70,15 @@ export class MockDownloadService implements DownloadService {
     }
 
     if (Platform.OS === 'web') {
-      onProgress?.(1);
+      onProgress?.({
+        status: 'finished',
+        downloadedBytes: null,
+        totalBytes: null,
+        totalBytesEstimate: null,
+        speed: null,
+        eta: 0,
+        progress: 1,
+      });
       return this.createTrack(info, bundledUri);
     }
 
@@ -75,15 +92,33 @@ export class MockDownloadService implements DownloadService {
       throw new Error('Non è stato possibile salvare il file audio locale.');
     }
 
-    onProgress?.(1);
+    onProgress?.({
+      status: 'finished',
+      downloadedBytes: destination.size,
+      totalBytes: destination.size,
+      totalBytesEstimate: null,
+      speed: null,
+      eta: 0,
+      progress: 1,
+    });
     return this.createTrack(info, destination.uri);
   }
 
-  private createTrack(info: TrackInfo, localUri: string): Track {
+  async deleteAudio(track: Track): Promise<void> {
+    deleteManagedAudioFile(track.localUri);
+  }
+
+  private createTrack(info: DownloadInfo, localUri: string): Track {
     return {
-      ...info,
+      id: info.id,
+      title: info.title,
+      artist: info.artist,
+      thumbnail: info.thumbnail,
+      duration: info.duration,
+      sourceUrl: info.sourceUrl,
       localUri,
       downloadedAt: new Date().toISOString(),
+      missingLocalFile: false,
     };
   }
 }

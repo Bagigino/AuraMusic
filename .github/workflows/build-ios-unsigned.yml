@@ -312,6 +312,9 @@ jobs:
       - name: Run lint
         run: npm run lint
 
+      - name: Run JavaScript integration tests
+        run: npm test
+
       - name: Verify Expo configuration and local module
         shell: bash
         run: |

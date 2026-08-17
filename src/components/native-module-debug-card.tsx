@@ -220,6 +220,7 @@ export function NativeModuleDebugCard() {
         sourceUrl: youtubeUrl.trim(),
         localUri: downloadedAudio.localUri,
         downloadedAt: new Date().toISOString(),
+        missingLocalFile: false,
       });
       router.push('/player');
     } catch (playbackError) {

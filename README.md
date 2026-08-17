@@ -1,49 +1,65 @@
 # AuraMusic
 
-Prima versione di un player musicale locale realizzato con React Native, Expo SDK 57 e TypeScript.
+Player musicale locale realizzato con React Native, Expo SDK 57 e TypeScript.
 
-## Avvio su iPhone con Expo Go
+Su iOS la schermata **Add Track** usa il `DownloadService` reale per analizzare un
+URL YouTube, scaricare esclusivamente un formato M4A audio-only e salvare il Track
+in SQLite. La Library e il Player lavorano poi soltanto con il `localUri` del file
+in `Documents/music`, quindi il brano resta riproducibile offline dopo il riavvio.
 
-1. Installa le dipendenze con `npm install`.
-2. Avvia il progetto da Windows con `npx expo start`.
-3. Apri Expo Go su iPhone e scansiona il QR code. PC e iPhone devono poter comunicare sulla stessa rete durante lo sviluppo.
+La build web mantiene intenzionalmente il servizio mock con l'asset M4A di test:
+non esegue CPython, yt-dlp o download YouTube nel browser.
 
-Per aprire anche la versione web, premi `w` nel terminale. La configurazione Metro include il supporto WASM richiesto da `expo-sqlite`.
+## Flusso iOS
 
-## Prova del flusso offline
+1. Apri **Add Track** e incolla un URL HTTPS YouTube.
+2. Premi **Analyze** per vedere titolo, uploader, durata, thumbnail e disponibilità
+   M4A.
+3. Premi **Download** e attendi le fasi `downloading` e `saving`.
+4. Apri **Library** e seleziona il Track: il Player usa il file M4A locale.
+5. Per verificare l'offline, chiudi l'app, abilita la modalità aereo, riaprila e
+   riproduci nuovamente il Track.
 
-1. Apri **Add Track** e tocca **Aggiungi alla libreria**.
-2. AuraMusic copia l’asset `aura-test.m4a` nella directory persistente `Documents/music` e salva i metadata in SQLite.
-3. Apri **Library** e tocca il brano: il player usa il suo `file://` locale.
-4. Dopo che il progetto è caricato in Expo Go, disattiva la connessione Internet e prova nuovamente play/pausa e seek. La riproduzione del brano non effettua richieste di rete.
+La sezione **Debug** in Add Track rimane disponibile per i test isolati del modulo
+nativo, di CPython, yt-dlp, Apple WebKit, metadata e download M4A.
 
 ## Struttura
 
-- `src/models`: modello `Track`.
-- `src/database`: migrazioni e repository SQLite.
+- `src/models`: modello persistente `Track`.
+- `src/database`: migrazione e repository SQLite.
+- `src/storage`: accesso controllato alla directory musicale gestita.
 - `src/audio`: stato e comandi del player `expo-audio`.
-- `src/services`: interfaccia `DownloadService` (`getInfo` / `downloadAudio`) e implementazione MOCK per l’asset incluso.
-- `src/library`: stato applicativo della libreria.
+- `src/services`: contratto `DownloadService`, implementazione iOS nativa e mock web.
+- `src/library`: orchestrazione Library, persistenza, duplicati e verifica file.
 - `src/app`: schermate Expo Router `Library`, `Player` e `Add Track`.
+- `modules/aura-native-test`: local Expo Module, Swift e runtime Python embedded.
+- `tests`: test JS senza rete e con adapter nativo simulato.
 
-Questa versione non contiene download YouTube. Il modulo iOS locale include
-CPython, `yt-dlp==2026.07.04`, il provider Apple WebKit già validato e il POC
-isolato di estrazione metadata; non lo collega a `DownloadService`, Library o
-SQLite. I dettagli sono in
-[`docs/YOUTUBE_METADATA_EXTRACTION_POC.md`](docs/YOUTUBE_METADATA_EXTRACTION_POC.md).
+I dettagli dell'integrazione reale sono in
+[`docs/REAL_IOS_DOWNLOAD_INTEGRATION.md`](docs/REAL_IOS_DOWNLOAD_INTEGRATION.md).
 
-Sul web il MOCK riproduce l’asset del bundle e SQLite conserva i metadata nel browser, ma non esiste una vera directory `Documents/music`: la copia persistente e la garanzia offline vanno verificate su iOS tramite Expo Go.
+## Esecuzione web
 
-## Test del modulo iOS locale
+```powershell
+npm ci
+npx expo start --web
+```
 
-La sezione **Debug** in **Add Track** espone il pulsante **Test native module**. Il modulo locale `AuraNativeTest` usa Expo Modules API e su iOS restituisce da Swift `Hello from native iOS`.
+Sul web usa l'URL mock già presente in Add Track. SQLite persiste i metadata nel
+browser, ma il comportamento filesystem iOS va verificato nella build nativa.
 
-Il modulo custom non è incluso in Expo Go: per eseguire il codice Swift serve una development build. Su web lo stesso pulsante usa il fallback `Native iOS module unavailable on web`; su Expo Go mostra un errore gestito che invita a installare la development build.
+## Build iOS unsigned
+
+Il workflow `.github/workflows/build-ios-unsigned.yml` genera con Expo Prebuild una
+Release `iphoneos` non firmata, crea `AuraMusic.ipa` e la pubblica come artifact.
+Consulta [`docs/IOS_SIDELOAD_BUILD.md`](docs/IOS_SIDELOAD_BUILD.md) per il flusso
+GitHub Actions → IPA unsigned → Sideloadly.
 
 ## Controlli di progetto
 
 ```powershell
 npx tsc --noEmit
 npm run lint
-npx expo export --platform ios
+npm test
+npx expo export --platform web
 ```

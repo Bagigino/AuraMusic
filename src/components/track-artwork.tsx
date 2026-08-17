@@ -1,12 +1,29 @@
+import { Image } from 'expo-image';
+import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { AuraColors } from '@/constants/aura-theme';
 
 type TrackArtworkProps = {
   size: number;
+  thumbnail?: string;
 };
 
-export function TrackArtwork({ size }: TrackArtworkProps) {
+export function TrackArtwork({ size, thumbnail = '' }: TrackArtworkProps) {
+  const [failedThumbnail, setFailedThumbnail] = useState<string | null>(null);
+
+  if (thumbnail && thumbnail !== failedThumbnail) {
+    return (
+      <Image
+        contentFit="cover"
+        onError={() => setFailedThumbnail(thumbnail)}
+        source={{ uri: thumbnail }}
+        style={{ width: size, height: size, borderRadius: size * 0.24 }}
+        transition={160}
+      />
+    );
+  }
+
   return (
     <View style={[styles.artwork, { width: size, height: size, borderRadius: size * 0.24 }]}>
       <View

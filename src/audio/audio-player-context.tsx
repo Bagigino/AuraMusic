@@ -33,6 +33,9 @@ export function AudioPlayerProvider({ children }: PropsWithChildren) {
 
   const playTrack = useCallback(
     (track: Track) => {
+      if (track.missingLocalFile) {
+        throw new Error('Il file audio locale non e disponibile.');
+      }
       player.replace(track.localUri);
       setCurrentTrack(track);
       player.play();

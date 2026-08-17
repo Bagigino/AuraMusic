@@ -138,6 +138,66 @@ private func makeVideoInfoResult(
   return result
 }
 
+private func prepareMusicDirectory(
+  fileManager: FileManager,
+  documentsDirectory: URL
+) throws -> URL {
+  let musicDirectory = documentsDirectory.appendingPathComponent(
+    "music",
+    isDirectory: true
+  )
+  try fileManager.createDirectory(
+    at: musicDirectory,
+    withIntermediateDirectories: true,
+    attributes: nil
+  )
+
+  let legacyDirectory = documentsDirectory.appendingPathComponent(
+    "music-downloads",
+    isDirectory: true
+  )
+  var isLegacyDirectory: ObjCBool = false
+  guard fileManager.fileExists(
+    atPath: legacyDirectory.path,
+    isDirectory: &isLegacyDirectory
+  ), isLegacyDirectory.boolValue else {
+    return musicDirectory
+  }
+
+  let legacyFiles = try fileManager.contentsOfDirectory(
+    at: legacyDirectory,
+    includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+    options: [.skipsHiddenFiles]
+  )
+  for sourceURL in legacyFiles where sourceURL.pathExtension.lowercased() == "m4a" {
+    guard let values = try? sourceURL.resourceValues(
+      forKeys: [.isRegularFileKey, .fileSizeKey]
+    ), values.isRegularFile == true, (values.fileSize ?? 0) > 0 else {
+      continue
+    }
+
+    let destinationURL = musicDirectory.appendingPathComponent(
+      sourceURL.lastPathComponent,
+      isDirectory: false
+    )
+    guard !fileManager.fileExists(atPath: destinationURL.path) else {
+      continue
+    }
+
+    do {
+      try fileManager.moveItem(at: sourceURL, to: destinationURL)
+      NSLog("AuraMusic migrated legacy M4A: %@", sourceURL.lastPathComponent)
+    } catch {
+      NSLog(
+        "AuraMusic could not migrate legacy M4A %@: %@",
+        sourceURL.lastPathComponent,
+        error.localizedDescription
+      )
+    }
+  }
+  return musicDirectory
+}
+
 public class AuraNativeTestModule: Module {
   private let downloadStateLock = NSLock()
   private var downloadIsActive = false
@@ -277,15 +337,11 @@ public class AuraNativeTestModule: Module {
         )
       }
 
-      let downloadDirectory = documentsDirectory.appendingPathComponent(
-        "music-downloads",
-        isDirectory: true
-      )
+      let downloadDirectory: URL
       do {
-        try fileManager.createDirectory(
-          at: downloadDirectory,
-          withIntermediateDirectories: true,
-          attributes: nil
+        downloadDirectory = try prepareMusicDirectory(
+          fileManager: fileManager,
+          documentsDirectory: documentsDirectory
         )
       } catch {
         let nsError = error as NSError
@@ -296,7 +352,7 @@ public class AuraNativeTestModule: Module {
           name: code,
           description: code == "DISK_FULL"
             ? "Spazio insufficiente per creare la directory di download."
-            : "Impossibile creare Documents/music-downloads.",
+            : "Impossibile preparare Documents/music.",
           code: code
         )
       }

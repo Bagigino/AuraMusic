@@ -34,7 +34,7 @@ export default function PlayerScreen() {
     <AuraScreen title="Player" subtitle="Riproduzione dal file salvato sul dispositivo.">
       <View style={styles.player}>
         <View style={styles.artworkShadow}>
-          <TrackArtwork size={260} />
+          <TrackArtwork size={260} thumbnail={currentTrack.thumbnail} />
         </View>
 
         <View style={styles.trackInfo}>

@@ -7,7 +7,7 @@ import { AudioPlayerProvider } from '@/audio/audio-player-context';
 import { AuraColors } from '@/constants/aura-theme';
 import { migrateDatabase } from '@/database/migrations';
 import { TrackLibraryProvider } from '@/library/track-library-context';
-import { mockDownloadService } from '@/services/mock-download-service';
+import { appDownloadService } from '@/services/app-download-service';
 
 const navigationTheme = {
   ...DarkTheme,
@@ -39,7 +39,7 @@ export default function TabLayout() {
   return (
     <ThemeProvider value={navigationTheme}>
       <SQLiteProvider databaseName="auramusic.db" onInit={migrateDatabase}>
-        <TrackLibraryProvider downloadService={mockDownloadService}>
+        <TrackLibraryProvider downloadService={appDownloadService}>
           <AudioPlayerProvider>
             <StatusBar style="light" />
             <Tabs

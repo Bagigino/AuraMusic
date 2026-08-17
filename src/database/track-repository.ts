@@ -23,6 +23,7 @@ function mapTrackRow(row: TrackRow): Track {
     sourceUrl: row.source_url,
     localUri: row.local_uri,
     downloadedAt: row.downloaded_at,
+    missingLocalFile: false,
   };
 }
 
@@ -64,4 +65,8 @@ export async function saveTrack(database: SQLiteDatabase, track: Track): Promise
     track.localUri,
     track.downloadedAt,
   );
+}
+
+export async function deleteTrack(database: SQLiteDatabase, trackId: string): Promise<void> {
+  await database.runAsync('DELETE FROM tracks WHERE id = ?', trackId);
 }

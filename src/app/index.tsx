@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppAudioPlayer } from '@/audio/audio-player-context';
 import { AuraButton } from '@/components/aura-button';
@@ -12,12 +12,30 @@ import { formatDuration } from '@/utils/format-duration';
 
 export default function LibraryScreen() {
   const router = useRouter();
-  const { tracks, isLoading, error } = useTrackLibrary();
+  const { tracks, isLoading, error, removeTrack } = useTrackLibrary();
   const { playTrack } = useAppAudioPlayer();
 
   const openTrack = (track: Track) => {
+    if (track.missingLocalFile) {
+      return;
+    }
     playTrack(track);
     router.push('./player');
+  };
+
+  const confirmRemoveTrack = (track: Track) => {
+    Alert.alert(
+      'Elimina brano',
+      `Rimuovere "${track.title}" dalla Library e dal dispositivo?`,
+      [
+        { text: 'Annulla', style: 'cancel' },
+        {
+          text: 'Elimina',
+          style: 'destructive',
+          onPress: () => void removeTrack(track),
+        },
+      ],
+    );
   };
 
   return (
@@ -25,16 +43,16 @@ export default function LibraryScreen() {
       {isLoading ? (
         <View style={styles.centerState}>
           <ActivityIndicator color={AuraColors.primary} />
-          <Text style={styles.mutedText}>Carico la libreria…</Text>
+          <Text style={styles.mutedText}>Carico la libreria...</Text>
         </View>
       ) : tracks.length === 0 ? (
         <View style={styles.emptyCard}>
           <View style={styles.emptyIcon}>
-            <Text style={styles.emptyIconText}>♫</Text>
+            <Text style={styles.emptyIconText}>♪</Text>
           </View>
-          <Text style={styles.emptyTitle}>La libreria è vuota</Text>
+          <Text style={styles.emptyTitle}>La libreria e vuota</Text>
           <Text style={styles.emptyText}>
-            Aggiungi il brano M4A incluso per provare subito la riproduzione offline.
+            Apri Add Track per analizzare un URL YouTube e salvare un M4A offline.
           </Text>
           <AuraButton label="Vai ad Add Track" onPress={() => router.push('./add-track')} />
         </View>
@@ -44,29 +62,50 @@ export default function LibraryScreen() {
             {tracks.length === 1 ? '1 BRANO' : `${tracks.length} BRANI`}
           </Text>
           {tracks.map((track) => (
-            <Pressable
-              accessibilityHint="Apre il player e avvia il brano locale"
-              accessibilityRole="button"
-              key={track.id}
-              onPress={() => openTrack(track)}
-              style={({ pressed }) => [styles.trackCard, pressed && styles.pressed]}>
-              <TrackArtwork size={68} />
-              <View style={styles.trackDetails}>
-                <Text numberOfLines={1} style={styles.trackTitle}>
-                  {track.title}
-                </Text>
-                <Text numberOfLines={1} style={styles.trackArtist}>
-                  {track.artist}
-                </Text>
-                <View style={styles.metadataRow}>
-                  <Text style={styles.localBadge}>● LOCALE</Text>
-                  <Text style={styles.duration}>{formatDuration(track.duration)}</Text>
+            <View key={track.id} style={styles.trackCard}>
+              <Pressable
+                accessibilityHint={
+                  track.missingLocalFile
+                    ? 'Il file locale non e disponibile'
+                    : 'Apre il player e avvia il brano locale'
+                }
+                accessibilityRole="button"
+                accessibilityState={{ disabled: track.missingLocalFile }}
+                disabled={track.missingLocalFile}
+                onPress={() => openTrack(track)}
+                style={({ pressed }) => [
+                  styles.trackMain,
+                  track.missingLocalFile && styles.unavailable,
+                  pressed && styles.pressed,
+                ]}>
+                <TrackArtwork size={68} thumbnail={track.thumbnail} />
+                <View style={styles.trackDetails}>
+                  <Text numberOfLines={1} style={styles.trackTitle}>
+                    {track.title}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.trackArtist}>
+                    {track.artist}
+                  </Text>
+                  <View style={styles.metadataRow}>
+                    <Text
+                      style={track.missingLocalFile ? styles.missingBadge : styles.localBadge}>
+                      {track.missingLocalFile ? 'FILE MANCANTE' : '● LOCALE'}
+                    </Text>
+                    <Text style={styles.duration}>{formatDuration(track.duration)}</Text>
+                  </View>
                 </View>
-              </View>
-              <View style={styles.playButton}>
-                <Text style={styles.playButtonText}>▶</Text>
-              </View>
-            </Pressable>
+                <View style={styles.playButton}>
+                  <Text style={styles.playButtonText}>▶</Text>
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityLabel={`Elimina ${track.title}`}
+                accessibilityRole="button"
+                onPress={() => confirmRemoveTrack(track)}
+                style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}>
+                <Text style={styles.deleteText}>Elimina</Text>
+              </Pressable>
+            </View>
           ))}
         </View>
       )}
@@ -132,14 +171,17 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   trackCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    padding: 14,
+    overflow: 'hidden',
     borderRadius: 22,
     backgroundColor: AuraColors.surface,
     borderColor: AuraColors.border,
     borderWidth: 1,
+  },
+  trackMain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    padding: 14,
   },
   trackDetails: {
     flex: 1,
@@ -167,6 +209,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.7,
   },
+  missingBadge: {
+    color: AuraColors.danger,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+  },
   duration: {
     color: AuraColors.textMuted,
     fontSize: 11,
@@ -183,6 +231,21 @@ const styles = StyleSheet.create({
     color: AuraColors.background,
     fontSize: 15,
     marginLeft: 2,
+  },
+  deleteButton: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopColor: AuraColors.border,
+    borderTopWidth: 1,
+    backgroundColor: AuraColors.background,
+  },
+  deleteText: {
+    color: AuraColors.danger,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  unavailable: {
+    opacity: 0.48,
   },
   pressed: {
     opacity: 0.75,

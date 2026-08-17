@@ -7,4 +7,5 @@ export type Track = {
   sourceUrl: string;
   localUri: string;
   downloadedAt: string;
+  missingLocalFile: boolean;
 };

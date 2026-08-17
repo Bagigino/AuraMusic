@@ -1,15 +1,18 @@
 # YouTube M4A download POC
 
-This proof of concept is isolated in the `AuraNativeTest` debug module. It does not
-write to SQLite, add a track to Library, or change the application's mock
-`DownloadService`.
+This document describes the original isolated Debug proof of concept. The same
+validated native pipeline is now also used by the real iOS `DownloadService`; see
+`REAL_IOS_DOWNLOAD_INTEGRATION.md`. The Debug controls remain available and still
+do not write to SQLite.
 
 ## Native API and destination
 
 `downloadYouTubeM4a(url, formatId?)` is an asynchronous Expo Module function. Swift
-obtains the application Documents directory with `FileManager`, creates
-`Documents/music-downloads`, and passes that internal path to the existing embedded
-CPython interpreter. JavaScript cannot provide a filesystem destination.
+obtains the application Documents directory with `FileManager`, creates the
+canonical `Documents/music` directory, and passes that internal path to the existing
+embedded CPython interpreter. JavaScript cannot provide a filesystem destination.
+Valid nonempty M4A files left by older builds in `Documents/music-downloads` are
+moved to `Documents/music` when the native download entry point prepares storage.
 
 The only output template is:
 
@@ -20,11 +23,11 @@ The only output template is:
 The expected final path is therefore:
 
 ```text
-Documents/music-downloads/<videoId>.m4a
+Documents/music/<videoId>.m4a
 ```
 
 Swift resolves and validates the returned path, verifies that it is a regular file
-inside `music-downloads`, checks that its size is greater than zero, and creates a
+inside `music`, checks that its size is greater than zero, and creates a
 percent-encoded `file://` URL with `URL.absoluteString` for `expo-audio`.
 
 ## Format selection and yt-dlp options
@@ -38,7 +41,7 @@ The actual download uses yt-dlp's embedded `YoutubeDL.extract_info(url,
 download=True)` API with the selected exact format ID. Relevant options are:
 
 - `noplaylist: True`
-- `paths.home: Documents/music-downloads`
+- `paths.home: Documents/music`
 - `outtmpl.default: %(id)s.%(ext)s`
 - `socket_timeout: 25`
 - `cachedir: False`
