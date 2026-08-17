@@ -50,28 +50,38 @@ mkdir -p "$HOST_BUILD_DIRECTORY"
   make -j "$JOBS"
 )
 
-test -x "$HOST_BUILD_DIRECTORY/python" || {
+HOST_BUILD_PYTHON="$HOST_BUILD_DIRECTORY/python"
+if [[ ! -x "$HOST_BUILD_PYTHON" && -x "$HOST_BUILD_DIRECTORY/python.exe" ]]; then
+  HOST_BUILD_PYTHON="$HOST_BUILD_DIRECTORY/python.exe"
+fi
+
+test -x "$HOST_BUILD_PYTHON" || {
   echo "The host CPython build interpreter was not generated." >&2
   exit 1
 }
 
 BUILD_TRIPLE="$($SOURCE_DIRECTORY/config.guess)"
 IOS_TOOL_PATH="$SOURCE_DIRECTORY/Apple/iOS/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin"
+CPYTHON_MAJOR_MINOR="${CPYTHON_VERSION%.*}"
+HOST_BUILD_COMMAND="python$CPYTHON_MAJOR_MINOR"
 mkdir -p "$HOST_TOOL_DIRECTORY"
-ln -s "$HOST_BUILD_DIRECTORY/python" "$HOST_TOOL_DIRECTORY/python3.14"
+ln -s "$HOST_BUILD_PYTHON" "$HOST_TOOL_DIRECTORY/$HOST_BUILD_COMMAND"
 CROSS_BUILD_PATH="$HOST_TOOL_DIRECTORY:$IOS_TOOL_PATH"
+ORIGINAL_PATH="$PATH"
+export PATH="$CROSS_BUILD_PATH"
+hash -r
 
 # CPython's cross-configure validates --with-build-python with `command -v`.
 # Expose the freshly built interpreter as a command on the same restricted PATH
 # used for the iOS build, then verify both command resolution and its version.
-PATH="$CROSS_BUILD_PATH" command -v python3.14 >/dev/null || {
-  echo "The host CPython build interpreter is not resolvable as python3.14." >&2
+command -v "$HOST_BUILD_COMMAND" >/dev/null || {
+  echo "The host CPython build interpreter is not resolvable as $HOST_BUILD_COMMAND." >&2
   exit 1
 }
 
-HOST_PYTHON_VERSION="$(PATH="$CROSS_BUILD_PATH" python3.14 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-if [[ "$HOST_PYTHON_VERSION" != "3.14" ]]; then
-  echo "The host build interpreter has version $HOST_PYTHON_VERSION; expected 3.14." >&2
+HOST_PYTHON_VERSION="$("$HOST_BUILD_COMMAND" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+if [[ "$HOST_PYTHON_VERSION" != "$CPYTHON_MAJOR_MINOR" ]]; then
+  echo "The host build interpreter has version $HOST_PYTHON_VERSION; expected $CPYTHON_MAJOR_MINOR." >&2
   exit 1
 fi
 
@@ -79,7 +89,6 @@ echo "Cross-compiling a dependency-minimal CPython framework for arm64 iPhone de
 mkdir -p "$DEVICE_BUILD_DIRECTORY"
 (
   cd "$DEVICE_BUILD_DIRECTORY"
-  PATH="$CROSS_BUILD_PATH" \
   IPHONEOS_DEPLOYMENT_TARGET="$IOS_DEPLOYMENT_TARGET" \
   CC=arm64-apple-ios-clang \
   CXX=arm64-apple-ios-clang++ \
@@ -89,14 +98,17 @@ mkdir -p "$DEVICE_BUILD_DIRECTORY"
   "$SOURCE_DIRECTORY/configure" \
     "--host=arm64-apple-ios$IOS_DEPLOYMENT_TARGET" \
     "--build=$BUILD_TRIPLE" \
-    --with-build-python=python3.14 \
+    "--with-build-python=$HOST_BUILD_COMMAND" \
     "--enable-framework=$DEVICE_INSTALL_DIRECTORY" \
     --without-ensurepip \
     --disable-test-modules
 
-  PATH="$CROSS_BUILD_PATH" make -j "$JOBS"
-  PATH="$CROSS_BUILD_PATH" make install
+  make -j "$JOBS"
+  make install
 )
+
+export PATH="$ORIGINAL_PATH"
+hash -r
 
 PYTHON_FRAMEWORK="$DEVICE_INSTALL_DIRECTORY/Python.framework"
 test -f "$PYTHON_FRAMEWORK/Python" || {
