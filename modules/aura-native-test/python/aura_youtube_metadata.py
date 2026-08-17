@@ -30,10 +30,10 @@ _ALLOWED_HOSTS = frozenset(
 )
 _NETWORK_TIMEOUT_SECONDS = 25
 _MAX_DIAGNOSTIC_LOG_ENTRIES = 200
-_URL_PATTERN = re.compile(r"https://[^\s\]\[<>()\"']+", re.IGNORECASE)
+_URL_PATTERN = re.compile(r"https?://[^\s\]\[<>()\"']+", re.IGNORECASE)
 _SENSITIVE_PATTERN = re.compile(
-    r"(?i)(authorization|cookie|set-cookie|x-goog-visitor-id|signature|sig|token)"
-    r"\s*[:=]\s*[^\s,;]+"
+    r"(?im)\b(authorization|cookie|set-cookie|x-goog-visitor-id|signature|sig|token)"
+    r"\s*[:=]\s*[^\r\n]+"
 )
 
 
@@ -52,7 +52,9 @@ def _redact_log_message(message: Any) -> str:
 
     def redact_url(match: re.Match[str]) -> str:
         try:
-            return urlsplit(match.group(0))._replace(query="", fragment="").geturl()
+            return urlsplit(match.group(0))._replace(
+                path="/<redacted>", query="", fragment=""
+            ).geturl()
         except ValueError:
             return "https://<redacted-url>"
 
@@ -241,7 +243,23 @@ def _classify_download_error(error: DownloadError) -> AuraYouTubeExtractionError
         return AuraYouTubeExtractionError(
             "PRIVATE_VIDEO", "Il video YouTube è privato."
         )
-    if any(term in diagnostic for term in ("removed", "deleted", "video unavailable", "not available")):
+    if any(
+        term in diagnostic
+        for term in ("challenge", "javascript", "js runtime", "nsig", "signature solving")
+    ):
+        return AuraYouTubeExtractionError(
+            "JS_CHALLENGE_ERROR", "La challenge JavaScript di YouTube non è stata risolta."
+        )
+    if any(
+        term in diagnostic
+        for term in (
+            "removed",
+            "deleted",
+            "video unavailable",
+            "video isn't available",
+            "video does not exist",
+        )
+    ):
         return AuraYouTubeExtractionError(
             "VIDEO_UNAVAILABLE", "Il video YouTube non esiste più o non è disponibile."
         )
@@ -251,13 +269,6 @@ def _classify_download_error(error: DownloadError) -> AuraYouTubeExtractionError
     ):
         return AuraYouTubeExtractionError(
             "RESTRICTED_VIDEO", "Il video richiede accesso o è soggetto a restrizioni."
-        )
-    if any(
-        term in diagnostic
-        for term in ("challenge", "javascript", "js runtime", "nsig", "signature solving")
-    ):
-        return AuraYouTubeExtractionError(
-            "JS_CHALLENGE_ERROR", "La challenge JavaScript di YouTube non è stata risolta."
         )
     return AuraYouTubeExtractionError(
         "EXTRACTOR_ERROR", "yt-dlp non è riuscito a estrarre i metadata del video."
@@ -370,7 +381,8 @@ def extract_youtube_info_json(raw_url: str) -> str:
     except BaseException as error:
         logger.error(f"PYTHON_ERROR: {type(error).__name__}: {error}")
         print(
-            "AuraMusic YouTube metadata traceback:\n" + traceback.format_exc(),
+            "AuraMusic YouTube metadata traceback:\n"
+            + _redact_log_message(traceback.format_exc()),
             file=sys.stderr,
             flush=True,
         )

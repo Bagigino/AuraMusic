@@ -12,6 +12,11 @@ Non esegue richieste di rete, `extract_info()`, download o conversioni. Non
 include yt-dlp-ejs, QuickJS, Deno, Node come runtime Python, FFmpeg o dipendenze
 Python opzionali di yt-dlp.
 
+Questa descrizione resta riferita al POC di solo import. Il successivo POC di
+rete aggiunge esclusivamente la dipendenza Python pura `certifi`, come descritto
+in `docs/YOUTUBE_METADATA_EXTRACTION_POC.md`; continua a non installare i runtime
+o gli strumenti esclusi sopra.
+
 ## Vendoring in CI
 
 Il workflow prepara una directory ignorata da Git:

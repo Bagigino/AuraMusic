@@ -116,16 +116,16 @@ export function NativeModuleDebugCard() {
 
     youtubeRequestInFlight.current = true;
     setActiveTest('youtube-metadata');
-    setYoutubeInfo(null);
-    setYoutubeMessage(null);
+    setYouTubeInfo(null);
+    setYouTubeMessage(null);
     setError(null);
 
     try {
       const result = await extractYouTubeInfo(youtubeUrl.trim());
       if (typeof result === 'string') {
-        setYoutubeMessage(result);
+        setYouTubeMessage(result);
       } else {
-        setYoutubeInfo(result);
+        setYouTubeInfo(result);
       }
     } catch (extractionError) {
       setError(getErrorMessage(extractionError));
@@ -220,8 +220,8 @@ export function NativeModuleDebugCard() {
           <Text style={styles.metadataLine}>
             Audio formats found: {youtubeInfo.audioFormats.length}
           </Text>
-          {youtubeInfo.audioFormats.map((format) => (
-            <Text key={format.formatId} style={styles.formatLine}>
+          {youtubeInfo.audioFormats.map((format, index) => (
+            <Text key={`${format.formatId}-${index}`} style={styles.formatLine}>
               {formatAudioFormat(format)}
             </Text>
           ))}

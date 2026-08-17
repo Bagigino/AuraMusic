@@ -45,6 +45,8 @@ La pipeline fallisce se TypeScript, lint, Expo Prebuild, CocoaPods o xcodebuild 
 - CocoaPods installi **AuraNativeTest** come pod locale;
 - il modulo sia presente nell’eseguibile iOS compilato;
 - Python.framework, standard library e codice Python di test siano presenti nel bundle;
+- il modulo metadata, yt-dlp 2026.07.04, il provider Apple WebKit 0.1.1 e il
+  bundle CA `certifi` siano presenti nell'app;
 - il binario dell'app sia collegato a Python.framework;
 - esista un solo bundle .app Release per iphoneos;
 - AuraMusic.ipa venga creata e superi il controllo ZIP.
