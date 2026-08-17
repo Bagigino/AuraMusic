@@ -21,6 +21,7 @@ from aura_yt_dlp_apple_provider import (
 from yt_dlp import YoutubeDL
 from yt_dlp.networking.exceptions import (
     CertificateVerifyError,
+    HTTPError,
     RequestError,
     TransportError,
 )
@@ -36,6 +37,9 @@ _ALLOWED_HOSTS = frozenset(
     {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 )
 _NETWORK_TIMEOUT_SECONDS = 25
+_DOWNLOAD_RETRIES = 3
+_EXTRACTOR_RETRIES = 2
+_FRAGMENT_RETRIES = 3
 _DEFAULT_SEARCH_LIMIT = 10
 _MAX_SEARCH_LIMIT = 20
 _MAX_SEARCH_QUERY_LENGTH = 200
@@ -403,6 +407,35 @@ def _classify_download_error(error: DownloadError) -> AuraYouTubeExtractionError
         return AuraYouTubeExtractionError(
             "UNSUPPORTED_URL", "yt-dlp non riconosce questo URL YouTube."
         )
+
+    http_status: int | None = None
+    for item in error_chain:
+        if not isinstance(item, HTTPError):
+            continue
+        status = getattr(item, "status", None)
+        if isinstance(status, int):
+            http_status = status
+            break
+    if http_status is None:
+        status_match = re.search(r"\bhttp error (\d{3})\b", diagnostic)
+        if status_match is not None:
+            http_status = int(status_match.group(1))
+
+    if http_status in (401, 403):
+        return AuraYouTubeExtractionError(
+            "MEDIA_ACCESS_DENIED",
+            "YouTube ha rifiutato l'accesso diretto al formato M4A selezionato.",
+        )
+    if http_status == 429:
+        return AuraYouTubeExtractionError(
+            "YOUTUBE_RATE_LIMITED",
+            "YouTube ha temporaneamente limitato le richieste. Riprova piu tardi.",
+        )
+    if http_status is not None:
+        return AuraYouTubeExtractionError(
+            "YOUTUBE_HTTP_ERROR",
+            f"YouTube ha risposto con errore HTTP {http_status}.",
+        )
     if any(isinstance(item, (TransportError, RequestError)) for item in error_chain):
         return AuraYouTubeExtractionError(
             "NETWORK_ERROR", "Impossibile contattare YouTube. Controlla la connessione."
@@ -682,8 +715,8 @@ def download_youtube_m4a_json(
             "simulate": True,
             "noplaylist": True,
             "socket_timeout": _NETWORK_TIMEOUT_SECONDS,
-            "retries": 1,
-            "extractor_retries": 1,
+            "retries": _DOWNLOAD_RETRIES,
+            "extractor_retries": _EXTRACTOR_RETRIES,
             "fragment_retries": 0,
             "cachedir": False,
             "logger": logger,
@@ -757,9 +790,10 @@ def download_youtube_m4a_json(
             "quiet": True,
             "verbose": True,
             "socket_timeout": _NETWORK_TIMEOUT_SECONDS,
-            "retries": 1,
-            "extractor_retries": 1,
-            "fragment_retries": 1,
+            "retries": _DOWNLOAD_RETRIES,
+            "extractor_retries": _EXTRACTOR_RETRIES,
+            "fragment_retries": _FRAGMENT_RETRIES,
+            "file_access_retries": 2,
             "cachedir": False,
             "continuedl": False,
             "overwrites": False,

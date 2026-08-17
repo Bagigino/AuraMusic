@@ -15,41 +15,7 @@ import {
 } from '@/services/download-flow-state';
 import type { DownloadProgress } from '@/services/download-service';
 import { formatDuration } from '@/utils/format-duration';
-
-function getUserFacingError(error: unknown) {
-  const nativeError = error as { code?: unknown; message?: unknown };
-  const code = typeof nativeError?.code === 'string' ? nativeError.code : null;
-  const messages: Record<string, string> = {
-    INVALID_URL: 'Inserisci un URL HTTPS YouTube valido.',
-    NO_M4A_FORMAT: 'No compatible M4A audio format available.',
-    NETWORK_ERROR: 'YouTube non e raggiungibile. Controlla la connessione.',
-    NETWORK_TIMEOUT: 'La richiesta a YouTube ha superato il timeout.',
-    TLS_ERROR: 'La connessione sicura a YouTube non e riuscita.',
-    JS_CHALLENGE_ERROR: 'La challenge YouTube non e stata risolta.',
-    APPLE_PROVIDER_UNAVAILABLE: 'Il provider Apple WebKit non e disponibile.',
-    PRIVATE_VIDEO: 'Il video YouTube e privato.',
-    RESTRICTED_VIDEO: 'Il video richiede accesso o e soggetto a restrizioni.',
-    VIDEO_UNAVAILABLE: 'Il video non esiste piu o non e disponibile.',
-    UNSUPPORTED_URL: 'yt-dlp non riconosce questo URL YouTube.',
-    EXTRACTOR_ERROR: 'yt-dlp non e riuscito ad analizzare il video.',
-    DOWNLOAD_INTERRUPTED: 'Il download e stato interrotto.',
-    DOWNLOAD_IN_PROGRESS: 'Un download audio e gia in corso.',
-    DISK_FULL: 'Spazio insufficiente sul dispositivo.',
-    FILESYSTEM_ERROR: 'Non e stato possibile salvare il file audio.',
-    FINAL_FILE_MISSING: 'Il file M4A finale non e stato trovato.',
-    INVALID_DOWNLOAD_RESULT: 'Il modulo nativo ha restituito un file inatteso.',
-    UNSAFE_LOCAL_PATH: 'Il file scaricato non si trova nella directory gestita.',
-    EXISTING_FILE_INVALID: 'Il file M4A esistente e vuoto o non valido.',
-    DUPLICATE_TRACK: 'This track is already in your library.',
-    SQLITE_SAVE_FAILED: 'Il file e stato scaricato, ma il salvataggio in Library e fallito.',
-  };
-  if (code && messages[code]) {
-    return messages[code];
-  }
-  return typeof nativeError?.message === 'string'
-    ? nativeError.message
-    : 'Si e verificato un errore inatteso.';
-}
+import { getUserFacingError } from '@/utils/get-user-facing-error';
 
 function formatBytes(bytes: number | null) {
   if (bytes === null) {

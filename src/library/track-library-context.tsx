@@ -16,6 +16,7 @@ import type {
   DownloadService,
 } from '@/services/download-service';
 import { localTrackFileExists } from '@/storage/music-file-storage';
+import { getUserFacingError } from '@/utils/get-user-facing-error';
 
 export type AnalyzeTrackResult = {
   info: DownloadInfo;
@@ -123,7 +124,7 @@ export function TrackLibraryProvider({
           ...duplicateStatus,
         };
       } catch (analysisError) {
-        const message = getErrorMessage(analysisError);
+        const message = getUserFacingError(analysisError);
         setError(message);
         throw analysisError;
       }
@@ -168,7 +169,7 @@ export function TrackLibraryProvider({
         setTracks((currentTracks) => [track, ...currentTracks]);
         return track;
       } catch (addError) {
-        const message = getErrorMessage(addError);
+        const message = getUserFacingError(addError);
         setError(message);
         throw addError;
       }

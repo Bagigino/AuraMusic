@@ -9,6 +9,33 @@ private struct AuraPythonRuntimeError: Error, LocalizedError {
   }
 }
 
+private final class AuraNativeModuleException: Exception, @unchecked Sendable {
+  private let nativeReason: String
+
+  override var reason: String {
+    nativeReason
+  }
+
+  override init(
+    name: String,
+    description: String,
+    code: String? = nil,
+    file: String = #fileID,
+    line: UInt = #line,
+    function: String = #function
+  ) {
+    nativeReason = description
+    super.init(
+      name: name,
+      description: description,
+      code: code,
+      file: file,
+      line: line,
+      function: function
+    )
+  }
+}
+
 private struct AuraYtDlpImportResult: Record {
   @Field var success: Bool = true
   @Field var version: String = ""
@@ -318,7 +345,7 @@ public class AuraNativeTestModule: Module {
       let resolvedLimit = min(max(limit ?? 10, 1), 20)
       var pythonError: NSString?
       guard let json = AuraSearchYouTube(query, resolvedLimit, &pythonError) else {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "NATIVE_BRIDGE_ERROR",
           description: pythonError.map { $0 as String }
             ?? "Ricerca YouTube fallita senza dettagli.",
@@ -333,7 +360,7 @@ public class AuraNativeTestModule: Module {
           from: Data((json as String).utf8)
         )
       } catch {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "INVALID_NATIVE_RESPONSE",
           description: "Il bridge Python ha restituito risultati di ricerca non validi.",
           code: "INVALID_NATIVE_RESPONSE"
@@ -345,7 +372,7 @@ public class AuraNativeTestModule: Module {
       }
 
       let searchError = envelope.error
-      throw Exception(
+      throw AuraNativeModuleException(
         name: searchError?.code ?? "SEARCH_ERROR",
         description: searchError?.message
           ?? "Ricerca YouTube fallita senza dettagli.",
@@ -356,7 +383,7 @@ public class AuraNativeTestModule: Module {
     AsyncFunction("extractYouTubeInfo") { (url: String) throws -> AuraYouTubeVideoInfoResult in
       var pythonError: NSString?
       guard let json = AuraExtractYouTubeInfo(url, &pythonError) else {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "NATIVE_BRIDGE_ERROR",
           description: pythonError.map { $0 as String }
             ?? "Estrazione metadata YouTube fallita senza dettagli.",
@@ -371,7 +398,7 @@ public class AuraNativeTestModule: Module {
           from: Data((json as String).utf8)
         )
       } catch {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "INVALID_NATIVE_RESPONSE",
           description: "Il bridge Python ha restituito un risultato non valido.",
           code: "INVALID_NATIVE_RESPONSE"
@@ -383,7 +410,7 @@ public class AuraNativeTestModule: Module {
       }
 
       let extractionError = envelope.error
-      throw Exception(
+      throw AuraNativeModuleException(
         name: extractionError?.code ?? "EXTRACTION_ERROR",
         description: extractionError?.message
           ?? "Estrazione metadata YouTube fallita senza dettagli.",
@@ -394,7 +421,7 @@ public class AuraNativeTestModule: Module {
     AsyncFunction("downloadYouTubeM4a") {
       (url: String, formatId: String?) throws -> AuraDownloadedAudioResult in
       guard self.beginDownload() else {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "DOWNLOAD_IN_PROGRESS",
           description: "Un download M4A e gia in corso.",
           code: "DOWNLOAD_IN_PROGRESS"
@@ -407,7 +434,7 @@ public class AuraNativeTestModule: Module {
         for: .documentDirectory,
         in: .userDomainMask
       ).first else {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "FILESYSTEM_ERROR",
           description: "La directory Documents dell'app non e disponibile.",
           code: "FILESYSTEM_ERROR"
@@ -425,7 +452,7 @@ public class AuraNativeTestModule: Module {
         let code = nsError.code == NSFileWriteOutOfSpaceError
           ? "DISK_FULL"
           : "FILESYSTEM_ERROR"
-        throw Exception(
+        throw AuraNativeModuleException(
           name: code,
           description: code == "DISK_FULL"
             ? "Spazio insufficiente per creare la directory di download."
@@ -460,7 +487,7 @@ public class AuraNativeTestModule: Module {
         progressHandler,
         &pythonError
       ) else {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "NATIVE_BRIDGE_ERROR",
           description: pythonError.map { $0 as String }
             ?? "Download M4A fallito senza dettagli.",
@@ -475,7 +502,7 @@ public class AuraNativeTestModule: Module {
           from: Data((json as String).utf8)
         )
       } catch {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "INVALID_NATIVE_RESPONSE",
           description: "Il bridge Python ha restituito un risultato download non valido.",
           code: "INVALID_NATIVE_RESPONSE"
@@ -484,7 +511,7 @@ public class AuraNativeTestModule: Module {
 
       guard envelope.ok, let payload = envelope.data else {
         let downloadError = envelope.error
-        throw Exception(
+        throw AuraNativeModuleException(
           name: downloadError?.code ?? "DOWNLOAD_ERROR",
           description: downloadError?.message
             ?? "Download M4A fallito senza dettagli.",
@@ -502,7 +529,7 @@ public class AuraNativeTestModule: Module {
             payload.ext.lowercased() == "m4a",
             outputURL.deletingLastPathComponent() == resolvedDownloadDirectory,
             outputURL.lastPathComponent == "\(payload.videoId).m4a" else {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "INVALID_NATIVE_RESPONSE",
           description: "Il percorso M4A restituito dal runtime non e valido.",
           code: "INVALID_NATIVE_RESPONSE"
@@ -513,7 +540,7 @@ public class AuraNativeTestModule: Module {
       do {
         attributes = try fileManager.attributesOfItem(atPath: outputURL.path)
       } catch {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "FILESYSTEM_ERROR",
           description: "Il file M4A finale non e accessibile.",
           code: "FILESYSTEM_ERROR"
@@ -522,7 +549,7 @@ public class AuraNativeTestModule: Module {
       let fileType = attributes[.type] as? FileAttributeType
       let verifiedSize = (attributes[.size] as? NSNumber)?.doubleValue ?? 0
       guard fileType == .typeRegular, verifiedSize > 0 else {
-        throw Exception(
+        throw AuraNativeModuleException(
           name: "FILESYSTEM_ERROR",
           description: "Il file M4A finale non e un file regolare non vuoto.",
           code: "FILESYSTEM_ERROR"
